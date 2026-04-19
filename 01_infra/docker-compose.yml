@@ -1,0 +1,34 @@
+services:
+  signal-cli-rest-api:
+    image: bbernhard/signal-cli-rest-api:latest
+    container_name: segretario_signal_cli
+    restart: unless-stopped
+    environment:
+      - MODE=json-rpc
+      - PHONE_NUMBER=${SIGNAL_PHONE_NUMBER}
+    ports:
+      - "8085:8080"
+    volumes:
+      - signal-cli-config:/home/.local/share/signal-cli
+    networks:
+      - segretario_network
+      - automation_automation_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/v1/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  signal-cli-config:
+    name: segretario_signal_cli_config
+
+networks:
+  segretario_network:
+    name: segretario_network
+    driver: bridge
+
+  # Rete condivisa con n8n — deve esistere già prima del deploy
+  automation_automation_network:
+    external: true
