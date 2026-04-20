@@ -1,0 +1,208 @@
+{
+  "name": "Segretario AI",
+  "nodes": [
+    {
+      "parameters": {
+        "ignoreReactions": true
+      },
+      "type": "n8n-nodes-signal-cli-rest-api.signalTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "6f3cd4ff-85a1-413f-a69e-65676b0fdef6",
+      "name": "Signal Trigger",
+      "credentials": {
+        "signalApi": {
+          "id": "BPJ0ZFQaJfUbDTXz",
+          "name": "Signal account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const sqlite3 = require('sqlite3').verbose();\n\nconst item = $input.first().json;\n\nconst signalMessageId = String(item.envelope?.timestamp || Date.now());\nconst testoOriginale = item.messageText || item.envelope?.dataMessage?.message || '';\nconst tipo = (item.attachments && item.attachments.length > 0) ? 'vocale' : 'testo';\n\nawait new Promise((resolve, reject) => {\n  const db = new sqlite3.Database('/data/segretario.db');\n  \n  db.run(\n    `INSERT OR IGNORE INTO messages_inbox \n     (signal_message_id, testo_originale, tipo, stato_elaborazione) \n     VALUES (?, ?, ?, 'ricevuto')`,\n    [signalMessageId, testoOriginale, tipo],\n    function(err) {\n      db.close();\n      if (err) reject(err);\n      else resolve();\n    }\n  );\n});\n\nreturn [{\n  json: {\n    signal_message_id: signalMessageId,\n    testo_originale: testoOriginale,\n    tipo: tipo,\n    mittente: item.envelope?.source || '',\n    nome_mittente: item.sourceName || ''\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        208,
+        0
+      ],
+      "id": "48480e90-fbab-49e3-909e-8c7d5ca3badf",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "YOUR_ANTHROPIC_API_KEY_HERE"
+            },
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "content-type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"claude-sonnet-4-20250514\",\n  \"max_tokens\": 1024,\n  \"system\": \"Sei Alfred, il segretario personale di Cesare Rizzo, dottore commercialista. Rispondi sempre in italiano, tono professionale ma cordiale, dai del tu a Cesare. Restituisci SOLO un oggetto JSON valido, senza backtick, senza markdown, senza testo aggiuntivo prima o dopo. La struttura è sempre questa: {\\\"intent\\\": \\\"domanda_generica\\\", \\\"testo_risposta\\\": \\\"la tua risposta conversazionale qui\\\", \\\"needs_confirmation\\\": false, \\\"motivo_conferma\\\": \\\"\\\"}. Gli intent possibili sono: crea_appuntamento, crea_task, lista_giornata, completa_task, posticipa_task, snooze_oggi, domanda_generica.\",\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"={{ $json.testo_originale }}\"\n    }\n  ]\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        416,
+        0
+      ],
+      "id": "457a8580-18a6-4a0a-b9a1-34e2b233bcb3",
+      "name": "HTTP Request"
+    },
+    {
+      "parameters": {
+        "jsCode": "const response = $input.first().json;\n\n// Estrai il testo dalla risposta Claude\nconst rawText = response.content[0].text;\n\n// Parsa il JSON restituito da Alfred\nconst alfred = JSON.parse(rawText);\n\nreturn [{\n  json: {\n    intent: alfred.intent,\n    testo_risposta: alfred.testo_risposta,\n    needs_confirmation: alfred.needs_confirmation,\n    motivo_conferma: alfred.motivo_conferma || ''\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        624,
+        0
+      ],
+      "id": "b4b943e4-3bdb-41d9-9ea6-ae2ab72776d5",
+      "name": "Code in JavaScript1"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "1c584891-1afd-46f6-8409-6da9e48543e3",
+              "leftValue": "=={{ $json.needs_confirmation }}",
+              "rightValue": "true",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        832,
+        0
+      ],
+      "id": "3c72b618-e6bb-418d-b4e7-287c7d959828",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "jsCode": "const https = require('https');\nconst http = require('http');\n\nconst testo = $('Code in JavaScript1').item.json.testo_risposta;\nconst destinatario = $('Signal Trigger').item.json.envelope.sourceNumber;\n\nconst payload = JSON.stringify({\n  message: testo,\n  number: \"+393517872627\",\n  recipients: [destinatario]\n});\n\nawait new Promise((resolve, reject) => {\n  const options = {\n    hostname: 'segretario_signal_cli',\n    port: 8080,\n    path: '/v2/send',\n    method: 'POST',\n    headers: {\n      'Content-Type': 'application/json',\n      'Content-Length': Buffer.byteLength(payload)\n    }\n  };\n\n  const req = http.request(options, (res) => {\n    let data = '';\n    res.on('data', chunk => data += chunk);\n    res.on('end', () => {\n      if (res.statusCode === 200 || res.statusCode === 201) {\n        resolve(data);\n      } else {\n        reject(new Error(`Status ${res.statusCode}: ${data}`));\n      }\n    });\n  });\n\n  req.on('error', reject);\n  req.write(payload);\n  req.end();\n});\n\nreturn [{\n  json: {\n    messaggio_inviato: testo,\n    destinatario: destinatario,\n    stato: 'inviato'\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1040,
+        96
+      ],
+      "id": "c542de17-cd3a-45a7-9dfd-94d65394b10e",
+      "name": "Code in JavaScript2"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Signal Trigger": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript1": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Code in JavaScript2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript2": {
+      "main": [
+        []
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": false
+  },
+  "versionId": "0a2139d6-7b36-4ddc-93ac-eef40f76c033",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "97e831daa831b2478c6e15942ecdaea506ad6ba802e16c1e1aa89d4dd0e2bb29"
+  },
+  "id": "K553wW_aIJp1yYf_9qUmR",
+  "tags": []
+}
