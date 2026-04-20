@@ -26,7 +26,7 @@ ed escalation, e invia un briefing mattutino vocale giornaliero.
 | spese_nextjs | 3005 | |
 | trasferte-app | 3006 | |
 | cantinetta_nextjs | 3007 | |
-| n8n | 5678 | orchestratore principale |
+| n8n | 5678 | orchestratore principale — volume /data montato su 03_database/ |
 | servizi_postgres | 5432 | |
 | gestionale_postgres | 5433 | |
 | spese_postgres | 5434 | |
@@ -74,9 +74,9 @@ o chiedere conferma all'utente, mai il modello.
 |---|---|---|---|
 | 0 | SIM prepagata dedicata | ✅ FATTO | Numero: +393517872627 |
 | 1 | Deploy signal-cli-rest-api, registrazione, test | ✅ FATTO | Vedi dettagli sotto |
-| 2 | Community node Signal in n8n + workflow base | ⏳ DA FARE | Prossimo passo |
-| 3 | Database SQLite: schema completo | ⏳ DA FARE | |
-| 4 | System prompt Claude | ⏳ DA FARE | |
+| 2 | Community node Signal in n8n + workflow base | ✅ FATTO | Workflow completo funzionante — vedi dettagli sotto |
+| 3 | Database SQLite: schema completo | ✅ FATTO | 4 tabelle: task, messages_inbox, messages_outbox, system_settings |
+| 4 | System prompt Claude | ✅ FATTO | System prompt Alfred integrato nel workflow — vedi dettagli sotto |
 | 5 | Integrazione Microsoft Graph API (Outlook) | ⏳ DA FARE | |
 | 6 | Integrazione Google Calendar API | ⏳ DA FARE | |
 
@@ -138,29 +138,114 @@ docker restart segretario_signal_cli
 
 ---
 
-## Prossimo passo: n8n — Community Node Signal
+## Dettagli tecnici — n8n
 
-### Installazione community node
-1. Aprire n8n (http://localhost:5678 o subdomain configurato)
-2. Settings → Community Nodes → Install
-3. Package: `n8n-nodes-signal-cli-rest-api`
-4. Riavviare n8n dopo l'installazione
+### Nodo SQLite
+n8n 2.4.6 non include il nodo SQLite nativo nei workflow.
+SQLite è presente solo come database interno di n8n, non come nodo utilizzabile.
+**Soluzione adottata:** nodo Code (JavaScript) con `require('sqlite3')`.
 
-### Primo workflow da costruire (Fase A, punto 2)
-**Nome:** `segretario-webhook-base`
+Variabili ambiente aggiunte al docker-compose di automation:
+```yaml
+- NODE_FUNCTION_ALLOW_EXTERNAL=sqlite3
+- NODE_FUNCTION_ALLOW_BUILTIN=*
+- N8N_COMMUNITY_PACKAGES_ALLOW_TOOL_USAGE=true
+```
 
-Nodi in sequenza:
-1. **Signal Trigger** — riceve messaggi in arrivo
-2. **SQLite** — salva messaggio in `messages_inbox` (con deduplicazione per `signal_message_id`)
-3. **HTTP Request** — chiama Claude API con system prompt
-4. **IF** — valuta `needs_confirmation` nel JSON risposta
-5. **Signal Send** — invia risposta testuale all'utente
-6. **SQLite** — salva risposta in `messages_outbox`
+### Volume database
+Il database è montato nel container n8n come volume cartella:
+- **Host:** `/home/cesare/progetti/segretario-ai/03_database`
+- **Container:** `/data`
+- **Permessi file .db:** 666
 
-### Riferimento signal-cli-rest-api in n8n
-- L'URL da usare nei nodi n8n per raggiungere signal-cli è:
-  `http://segretario_signal_cli:8080` (nome container, porta interna)
-  perché n8n e signal-cli sono sulla stessa rete Docker
+### Codice standard per accesso SQLite nei nodi Code
+```javascript
+const sqlite3 = require('sqlite3').verbose();
+const db = new sqlite3.Database('/data/segretario.db');
+// ... operazioni ...
+db.close();
+```
+
+### Workflow "Segretario AI" — stato nodi
+| Nodo | Tipo | Stato | Note |
+|---|---|---|---|
+| Signal Trigger | Community node | ✅ Funzionante | Credenziale: segretario_signal_cli:8080 |
+| Salva in messages_inbox | Code (JS) | ✅ Funzionante | Deduplicazione per timestamp Signal |
+| Chiama Claude API | HTTP Request | ✅ Funzionante | POST https://api.anthropic.com/v1/messages |
+| Valuta needs_confirmation | IF | ✅ Funzionante | Branch true = chiedi conferma, false = rispondi |
+| Invia risposta Signal | Code (JS) | ✅ Funzionante | Usa http.request nativo — vedi nota sotto |
+| Salva in messages_outbox | Code (JS) | ⏳ Da costruire | |
+
+### Invio messaggi Signal da n8n
+Il nodo community Signal Send e il nodo HTTP Request danno entrambi errore 400
+quando usati per inviare messaggi. **Soluzione adottata:** nodo Code (JS) con
+`http.request` nativo di Node.js.
+
+```javascript
+const http = require('http');
+
+const payload = JSON.stringify({
+  message: testo,
+  number: "+393517872627",       // numero mittente (account signal-cli)
+  recipients: [destinatario]     // numero destinatario
+});
+
+const options = {
+  hostname: 'segretario_signal_cli',
+  port: 8080,
+  path: '/v2/send',
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json',
+    'Content-Length': Buffer.byteLength(payload)
+  }
+};
+
+await new Promise((resolve, reject) => {
+  const req = http.request(options, (res) => {
+    let data = '';
+    res.on('data', chunk => data += chunk);
+    res.on('end', () => {
+      if (res.statusCode === 200 || res.statusCode === 201) resolve(data);
+      else reject(new Error(`Status ${res.statusCode}: ${data}`));
+    });
+  });
+  req.on('error', reject);
+  req.write(payload);
+  req.end();
+});
+```
+
+### System prompt Alfred
+Il segretario si chiama **Alfred**. System prompt da usare nelle chiamate Claude API:
+```
+Sei Alfred, il segretario personale di Cesare Rizzo, dottore commercialista.
+Rispondi sempre in italiano, tono professionale ma cordiale, dai del tu a Cesare.
+Restituisci SOLO un oggetto JSON valido, senza backtick, senza markdown, senza
+testo aggiuntivo prima o dopo. La struttura è sempre questa:
+{"intent": "domanda_generica", "testo_risposta": "...", "needs_confirmation": false, "motivo_conferma": ""}
+Gli intent possibili sono: crea_appuntamento, crea_task, lista_giornata,
+completa_task, posticipa_task, snooze_oggi, domanda_generica.
+```
+
+### API key Anthropic nei workflow n8n
+⚠️ MAI committare il JSON del workflow con la API key in chiaro.
+GitHub Push Protection blocca il push automaticamente.
+Prima di esportare e committare un workflow: sostituire la API key con il
+placeholder `YOUR_ANTHROPIC_API_KEY_HERE`.
+
+### Campi chiave dal payload Signal Trigger
+```
+item.messageText                        → testo del messaggio
+item.envelope.timestamp                 → ID univoco messaggio (usato come signal_message_id)
+item.envelope.source                    → numero mittente
+item.sourceName                         → nome mittente
+item.attachments                        → array allegati (vocali)
+item.envelope.dataMessage.message       → testo alternativo
+```
+
+### Riferimento URL interno signal-cli
+`http://segretario_signal_cli:8080` (nome container, porta interna Docker)
 
 ---
 
