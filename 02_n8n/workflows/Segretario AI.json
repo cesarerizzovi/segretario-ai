@@ -127,6 +127,19 @@
       ],
       "id": "c542de17-cd3a-45a7-9dfd-94d65394b10e",
       "name": "Code in JavaScript2"
+    },
+    {
+      "parameters": {
+        "jsCode": "const sqlite3 = require('sqlite3').verbose();\n\nconst inboxId = $('Code in JavaScript').item.json.signal_message_id;\nconst testoRisposta = $('Code in JavaScript1').item.json.testo_risposta;\nconst intent = $('Code in JavaScript1').item.json.intent;\n\nawait new Promise((resolve, reject) => {\n  const db = new sqlite3.Database('/data/segretario.db');\n  \n  db.run(\n    `INSERT INTO messages_outbox \n     (inbox_message_id, testo_risposta, tipo, azione_eseguita) \n     VALUES (?, ?, 'testo', ?)`,\n    [inboxId, testoRisposta, intent],\n    function(err) {\n      db.close();\n      if (err) reject(err);\n      else resolve();\n    }\n  );\n});\n\nreturn [{\n  json: {\n    stato: 'completato',\n    intent: intent,\n    risposta_salvata: testoRisposta\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1248,
+        96
+      ],
+      "id": "0dc685aa-5aa1-43e5-98b8-75d485690149",
+      "name": "Code in JavaScript3"
     }
   ],
   "pinData": {},
@@ -189,7 +202,13 @@
     },
     "Code in JavaScript2": {
       "main": [
-        []
+        [
+          {
+            "node": "Code in JavaScript3",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     }
   },
@@ -198,7 +217,7 @@
     "executionOrder": "v1",
     "availableInMCP": false
   },
-  "versionId": "0a2139d6-7b36-4ddc-93ac-eef40f76c033",
+  "versionId": "ecfa7382-03a8-4706-ba3f-1ff762df312c",
   "meta": {
     "templateCredsSetupCompleted": true,
     "instanceId": "97e831daa831b2478c6e15942ecdaea506ad6ba802e16c1e1aa89d4dd0e2bb29"
