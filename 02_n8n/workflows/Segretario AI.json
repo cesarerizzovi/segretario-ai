@@ -126,8 +126,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2112,
-        304
+        2640,
+        480
       ],
       "id": "c542de17-cd3a-45a7-9dfd-94d65394b10e",
       "name": "Invia risposta Signal"
@@ -139,8 +139,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2336,
-        304
+        2864,
+        336
       ],
       "id": "0dc685aa-5aa1-43e5-98b8-75d485690149",
       "name": "Salva in outbox"
@@ -356,8 +356,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.3,
       "position": [
-        1680,
-        800
+        1712,
+        368
       ],
       "id": "3c427ba0-e1b0-4f45-80b9-e5d5a0fbe661",
       "name": "Leggi eventi Outlook",
@@ -375,8 +375,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2464,
-        720
+        2224,
+        368
       ],
       "id": "7b55f46f-5fcb-47e2-bf2d-03d6d6ddb86a",
       "name": "Unisci e prepara lista appuntamenti"
@@ -388,8 +388,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1488,
-        672
+        1504,
+        368
       ],
       "id": "ad96d0b2-fba9-4fe3-a07a-d77b3c93ced5",
       "name": "Prepara query calendario"
@@ -408,8 +408,8 @@
       "type": "n8n-nodes-base.googleCalendar",
       "typeVersion": 1.3,
       "position": [
-        2080,
-        944
+        2048,
+        368
       ],
       "id": "24214008-bacd-43f2-8e91-9a7235a3a5fa",
       "name": "Get many events",
@@ -427,11 +427,58 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1840,
-        976
+        1888,
+        368
       ],
       "id": "d2093958-7ae2-4bc8-8626-c0bc3faa451d",
       "name": "Salva risultati Outlook"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "455cb67c-9aa8-4c0f-959d-60e665e3bef2",
+              "leftValue": "={{ $json.intent }}",
+              "rightValue": "crea_task",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1504,
+        656
+      ],
+      "id": "57966c44-777a-4f46-8597-13bd906dc187",
+      "name": "Smista intent (crea_task?)"
+    },
+    {
+      "parameters": {
+        "jsCode": "const sqlite3 = require('sqlite3').verbose();\n\nconst entita = $('Estrai JSON Alfred').item.json.entita;\nconst sourceMessageId = $('Salva in inbox').item.json.signal_message_id;\n\nconst descrizione = entita.descrizione || '';\nconst scadenza = entita.scadenza || null;\nconst priorita = entita.priorita || 'media';\n\n// Calcola next_followup_at: se c'è scadenza usa quella, altrimenti domani\nconst oggi = new Date(new Date().toLocaleString('en-US', { timeZone: 'Europe/Rome' }));\nlet nextFollowup;\nif (scadenza) {\n  nextFollowup = scadenza + 'T09:00:00';\n} else {\n  const domani = new Date(oggi);\n  domani.setDate(oggi.getDate() + 1);\n  const anno = domani.getFullYear();\n  const mese = String(domani.getMonth() + 1).padStart(2, '0');\n  const giorno = String(domani.getDate()).padStart(2, '0');\n  nextFollowup = `${anno}-${mese}-${giorno}T09:00:00`;\n}\n\nawait new Promise((resolve, reject) => {\n  const db = new sqlite3.Database('/data/segretario.db');\n  db.run(\n    `INSERT INTO task \n     (descrizione, scadenza, priorita, stato, reminder_count, next_followup_at, source_message_id, creato_il, updated_at)\n     VALUES (?, ?, ?, 'aperto', 0, ?, ?, datetime('now'), datetime('now'))`,\n    [descrizione, scadenza, priorita, nextFollowup, sourceMessageId],\n    function(err) {\n      db.close();\n      if (err) reject(err);\n      else resolve(this.lastID);\n    }\n  );\n});\n\nreturn [{\n  json: {\n    testo_risposta: $('Estrai JSON Alfred').item.json.testo_risposta\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1728,
+        544
+      ],
+      "id": "7f41dcac-df52-4d6f-9342-d9be369adb3b",
+      "name": "Crea task su SQLite"
     }
   ],
   "pinData": {},
@@ -594,7 +641,7 @@
         ],
         [
           {
-            "node": "Invia risposta Signal",
+            "node": "Smista intent (crea_task?)",
             "type": "main",
             "index": 0
           }
@@ -655,6 +702,35 @@
           }
         ]
       ]
+    },
+    "Smista intent (crea_task?)": {
+      "main": [
+        [
+          {
+            "node": "Crea task su SQLite",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Invia risposta Signal",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Crea task su SQLite": {
+      "main": [
+        [
+          {
+            "node": "Invia risposta Signal",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "active": true,
@@ -662,7 +738,7 @@
     "executionOrder": "v1",
     "availableInMCP": false
   },
-  "versionId": "3808f26d-7978-4e2a-996d-9051698c3b3d",
+  "versionId": "16e19a39-49b5-4242-ae45-9aabe8bb8f08",
   "meta": {
     "templateCredsSetupCompleted": true,
     "instanceId": "97e831daa831b2478c6e15942ecdaea506ad6ba802e16c1e1aa89d4dd0e2bb29"
