@@ -12,7 +12,7 @@ services:
       - signal-cli-config:/home/.local/share/signal-cli
     networks:
       - segretario_network
-      - automation_automation_network
+      - automation_network
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/v1/health"]
       interval: 30s
@@ -30,5 +30,5 @@ networks:
     driver: bridge
 
   # Rete condivisa con n8n — deve esistere già prima del deploy
-  automation_automation_network:
+  automation_network:
     external: true

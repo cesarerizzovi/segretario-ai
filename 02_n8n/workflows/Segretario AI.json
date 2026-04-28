@@ -8,11 +8,11 @@
       "type": "n8n-nodes-signal-cli-rest-api.signalTrigger",
       "typeVersion": 1,
       "position": [
-        0,
-        0
+        -272,
+        16
       ],
       "id": "6f3cd4ff-85a1-413f-a69e-65676b0fdef6",
-      "name": "Signal Trigger",
+      "name": "Ricevi messaggio Signal",
       "credentials": {
         "signalApi": {
           "id": "BPJ0ZFQaJfUbDTXz",
@@ -22,28 +22,26 @@
     },
     {
       "parameters": {
-        "jsCode": "const sqlite3 = require('sqlite3').verbose();\n\nconst item = $input.first().json;\n\nconst signalMessageId = String(item.envelope?.timestamp || Date.now());\nconst testoOriginale = item.messageText || item.envelope?.dataMessage?.message || '';\nconst tipo = (item.attachments && item.attachments.length > 0) ? 'vocale' : 'testo';\n\nawait new Promise((resolve, reject) => {\n  const db = new sqlite3.Database('/data/segretario.db');\n  \n  db.run(\n    `INSERT OR IGNORE INTO messages_inbox \n     (signal_message_id, testo_originale, tipo, stato_elaborazione) \n     VALUES (?, ?, ?, 'ricevuto')`,\n    [signalMessageId, testoOriginale, tipo],\n    function(err) {\n      db.close();\n      if (err) reject(err);\n      else resolve();\n    }\n  );\n});\n\nreturn [{\n  json: {\n    signal_message_id: signalMessageId,\n    testo_originale: testoOriginale,\n    tipo: tipo,\n    mittente: item.envelope?.source || '',\n    nome_mittente: item.sourceName || ''\n  }\n}];"
+        "jsCode": "const sqlite3 = require('sqlite3').verbose();\n\nconst item = $input.first().json;\n\nconst signalMessageId = String(item.envelope?.timestamp || Date.now());\nconst testoOriginale = item.messageText || item.envelope?.dataMessage?.message || '';\nconst tipo = (item.attachments && item.attachments.length > 0) ? 'vocale' : 'testo';\n\n// Calcola le date dei prossimi 7 giorni in Europe/Rome\nconst giorniSettimana = ['domenica','lunedi','martedi','mercoledi','giovedi','venerdi','sabato'];\nconst oggi = new Date(new Date().toLocaleString('en-US', { timeZone: 'Europe/Rome' }));\nconst mappaDate = {};\nfor (let i = 1; i <= 7; i++) {\n  const d = new Date(oggi);\n  d.setDate(oggi.getDate() + i);\n  const nomeGiorno = giorniSettimana[d.getDay()];\n  const anno = d.getFullYear();\n  const mese = String(d.getMonth() + 1).padStart(2, '0');\n  const giorno = String(d.getDate()).padStart(2, '0');\n  mappaDate[nomeGiorno] = `${anno}-${mese}-${giorno}`;\n}\nconst mappaDateStringa = Object.entries(mappaDate)\n  .map(([g, d]) => `${g}=${d}`)\n  .join(' ');\n\nconst isNuovo = await new Promise((resolve, reject) => {\n  const db = new sqlite3.Database('/data/segretario.db');\n  db.run(\n    `INSERT OR IGNORE INTO messages_inbox \n     (signal_message_id, testo_originale, tipo, stato_elaborazione) \n     VALUES (?, ?, ?, 'ricevuto')`,\n    [signalMessageId, testoOriginale, tipo],\n    function(err) {\n      db.close();\n      if (err) reject(err);\n      else resolve(this.changes > 0);\n    }\n  );\n});\n\nreturn [{\n  json: {\n    signal_message_id: signalMessageId,\n    testo_originale: testoOriginale,\n    tipo: tipo,\n    mittente: item.envelope?.source || '',\n    nome_mittente: item.sourceName || '',\n    is_nuovo: isNuovo,\n    mappa_date: mappaDateStringa\n  }\n}];"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        208,
-        0
+        -64,
+        16
       ],
       "id": "48480e90-fbab-49e3-909e-8c7d5ca3badf",
-      "name": "Code in JavaScript"
+      "name": "Salva in inbox"
     },
     {
       "parameters": {
         "method": "POST",
         "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
-            {
-              "name": "x-api-key",
-              "value": "YOUR_ANTHROPIC_API_KEY_HERE"
-            },
             {
               "name": "anthropic-version",
               "value": "2023-06-01"
@@ -56,7 +54,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"model\": \"claude-sonnet-4-20250514\",\n  \"max_tokens\": 1024,\n  \"system\": \"Sei Alfred, il segretario personale di Cesare Rizzo, dottore commercialista. Rispondi sempre in italiano, tono professionale ma cordiale, dai del tu a Cesare. Restituisci SOLO un oggetto JSON valido, senza backtick, senza markdown, senza testo aggiuntivo prima o dopo. La struttura è sempre questa: {\\\"intent\\\": \\\"domanda_generica\\\", \\\"testo_risposta\\\": \\\"la tua risposta conversazionale qui\\\", \\\"needs_confirmation\\\": false, \\\"motivo_conferma\\\": \\\"\\\"}. Gli intent possibili sono: crea_appuntamento, crea_task, lista_giornata, completa_task, posticipa_task, snooze_oggi, domanda_generica.\",\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"={{ $json.testo_originale }}\"\n    }\n  ]\n}",
+        "jsonBody": "={\n  \"model\": \"claude-sonnet-4-20250514\",\n  \"max_tokens\": 1024,\n  \"system\": \"Sei Alfred, il segretario personale di Cesare Rizzo, dottore commercialista. Rispondi sempre in italiano, tono professionale ma cordiale, dai del tu a Cesare. Restituisci SOLO un oggetto JSON valido, senza backtick, senza markdown, senza testo aggiuntivo prima o dopo. La struttura e sempre questa: {\\\"intent\\\": \\\"domanda_generica\\\", \\\"testo_risposta\\\": \\\"la tua risposta\\\", \\\"needs_confirmation\\\": false, \\\"motivo_conferma\\\": \\\"\\\", \\\"entita\\\": {\\\"data\\\": null, \\\"ora\\\": null, \\\"durata_minuti\\\": 60, \\\"descrizione\\\": null, \\\"calendario\\\": null, \\\"priorita\\\": null, \\\"scadenza\\\": null, \\\"data_inizio\\\": null, \\\"data_fine\\\": null, \\\"filtro_calendario\\\": \\\"entrambi\\\"}}. Gli intent possibili sono: crea_appuntamento, crea_task, lista_giornata, completa_task, posticipa_task, snooze_oggi, domanda_generica. Per crea_appuntamento compila data in formato YYYY-MM-DD, ora in formato HH:MM, durata_minuti come numero intero (default 60 se non specificato), descrizione, calendario outlook o google. Regola smistamento calendario: se il contesto e lavorativo come clienti, riunioni, scadenze fiscali, pratiche, colleghi, studio imposta calendario outlook. Se il contesto e privato come medico, famiglia, amici, sport, viaggi, casa imposta calendario google. Imposta needs_confirmation true solo se mancano data o ora, mai per il calendario. Per crea_task compila descrizione, scadenza in formato YYYY-MM-DD o null, priorita alta media o bassa. Per lista_giornata compila data_inizio e data_fine in formato YYYY-MM-DD in base al periodo richiesto (oggi: stessa data per entrambi, settimana: da oggi a +6 giorni, mese: da oggi a +29 giorni), e filtro_calendario con outlook se chiede appuntamenti di lavoro, google se chiede appuntamenti privati, entrambi se non specifica. La data di oggi e={{ $now.setZone('Europe/Rome').toFormat('yyyy-MM-dd') }}. Le date dei prossimi giorni sono: {{ $('Salva in inbox').item.json.mappa_date }}. Quando l utente indica un giorno della settimana usa SEMPRE la data esatta dalla mappa qui sopra senza fare calcoli.\",\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"={{ $json.testo_originale }}\"\n    }\n  ]\n}",
         "options": {}
       },
       "type": "n8n-nodes-base.httpRequest",
@@ -66,11 +64,17 @@
         0
       ],
       "id": "457a8580-18a6-4a0a-b9a1-34e2b233bcb3",
-      "name": "HTTP Request"
+      "name": "Chiama Alfred (Claude API)",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "k9nNFIY8N8wa6rZm",
+          "name": "Anthropic API Key"
+        }
+      }
     },
     {
       "parameters": {
-        "jsCode": "const response = $input.first().json;\n\n// Estrai il testo dalla risposta Claude\nconst rawText = response.content[0].text;\n\n// Parsa il JSON restituito da Alfred\nconst alfred = JSON.parse(rawText);\n\nreturn [{\n  json: {\n    intent: alfred.intent,\n    testo_risposta: alfred.testo_risposta,\n    needs_confirmation: alfred.needs_confirmation,\n    motivo_conferma: alfred.motivo_conferma || ''\n  }\n}];"
+        "jsCode": "const response = $input.first().json;\n\nconst rawText = response.content[0].text;\n\nconst alfred = JSON.parse(rawText);\n\nreturn [{\n  json: {\n    intent: alfred.intent,\n    testo_risposta: alfred.testo_risposta,\n    needs_confirmation: alfred.needs_confirmation,\n    motivo_conferma: alfred.motivo_conferma || '',\n    entita: alfred.entita || {}\n  }\n}];"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -79,7 +83,7 @@
         0
       ],
       "id": "b4b943e4-3bdb-41d9-9ea6-ae2ab72776d5",
-      "name": "Code in JavaScript1"
+      "name": "Estrai JSON Alfred"
     },
     {
       "parameters": {
@@ -113,98 +117,539 @@
         0
       ],
       "id": "3c72b618-e6bb-418d-b4e7-287c7d959828",
-      "name": "If"
+      "name": "Needs confirmation?"
     },
     {
       "parameters": {
-        "jsCode": "const https = require('https');\nconst http = require('http');\n\nconst testo = $('Code in JavaScript1').item.json.testo_risposta;\nconst destinatario = $('Signal Trigger').item.json.envelope.sourceNumber;\n\nconst payload = JSON.stringify({\n  message: testo,\n  number: \"+393517872627\",\n  recipients: [destinatario]\n});\n\nawait new Promise((resolve, reject) => {\n  const options = {\n    hostname: 'segretario_signal_cli',\n    port: 8080,\n    path: '/v2/send',\n    method: 'POST',\n    headers: {\n      'Content-Type': 'application/json',\n      'Content-Length': Buffer.byteLength(payload)\n    }\n  };\n\n  const req = http.request(options, (res) => {\n    let data = '';\n    res.on('data', chunk => data += chunk);\n    res.on('end', () => {\n      if (res.statusCode === 200 || res.statusCode === 201) {\n        resolve(data);\n      } else {\n        reject(new Error(`Status ${res.statusCode}: ${data}`));\n      }\n    });\n  });\n\n  req.on('error', reject);\n  req.write(payload);\n  req.end();\n});\n\nreturn [{\n  json: {\n    messaggio_inviato: testo,\n    destinatario: destinatario,\n    stato: 'inviato'\n  }\n}];"
+        "jsCode": "const https = require('https');\nconst http = require('http');\n\nconst testo = $input.first().json.testo_risposta || $('Estrai JSON Alfred').item.json.testo_risposta;\nconst destinatario = $('Ricevi messaggio Signal').item.json.envelope.sourceNumber;\n\nconst payload = JSON.stringify({\n  message: testo,\n  number: \"+393517872627\",\n  recipients: [destinatario]\n});\n\nawait new Promise((resolve, reject) => {\n  const options = {\n    hostname: 'segretario_signal_cli',\n    port: 8080,\n    path: '/v2/send',\n    method: 'POST',\n    headers: {\n      'Content-Type': 'application/json',\n      'Content-Length': Buffer.byteLength(payload)\n    }\n  };\n\n  const req = http.request(options, (res) => {\n    let data = '';\n    res.on('data', chunk => data += chunk);\n    res.on('end', () => {\n      if (res.statusCode === 200 || res.statusCode === 201) {\n        resolve(data);\n      } else {\n        reject(new Error(`Status ${res.statusCode}: ${data}`));\n      }\n    });\n  });\n\n  req.on('error', reject);\n  req.write(payload);\n  req.end();\n});\n\nreturn [{\n  json: {\n    messaggio_inviato: testo,\n    destinatario: destinatario,\n    stato: 'inviato'\n  }\n}];"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1040,
-        96
+        2112,
+        304
       ],
       "id": "c542de17-cd3a-45a7-9dfd-94d65394b10e",
-      "name": "Code in JavaScript2"
+      "name": "Invia risposta Signal"
     },
     {
       "parameters": {
-        "jsCode": "const sqlite3 = require('sqlite3').verbose();\n\nconst inboxId = $('Code in JavaScript').item.json.signal_message_id;\nconst testoRisposta = $('Code in JavaScript1').item.json.testo_risposta;\nconst intent = $('Code in JavaScript1').item.json.intent;\n\nawait new Promise((resolve, reject) => {\n  const db = new sqlite3.Database('/data/segretario.db');\n  \n  db.run(\n    `INSERT INTO messages_outbox \n     (inbox_message_id, testo_risposta, tipo, azione_eseguita) \n     VALUES (?, ?, 'testo', ?)`,\n    [inboxId, testoRisposta, intent],\n    function(err) {\n      db.close();\n      if (err) reject(err);\n      else resolve();\n    }\n  );\n});\n\nreturn [{\n  json: {\n    stato: 'completato',\n    intent: intent,\n    risposta_salvata: testoRisposta\n  }\n}];"
+        "jsCode": "const sqlite3 = require('sqlite3').verbose();\n\nconst inboxId = $('Salva in inbox').item.json.signal_message_id;\nconst testoRisposta = $('Estrai JSON Alfred').item.json.testo_risposta;\nconst intent = $('Estrai JSON Alfred').item.json.intent;\n\nawait new Promise((resolve, reject) => {\n  const db = new sqlite3.Database('/data/segretario.db');\n  \n  db.run(\n    `INSERT INTO messages_outbox \n     (inbox_message_id, testo_risposta, tipo, azione_eseguita) \n     VALUES (?, ?, 'testo', ?)`,\n    [inboxId, testoRisposta, intent],\n    function(err) {\n      db.close();\n      if (err) reject(err);\n      else resolve();\n    }\n  );\n});\n\nreturn [{\n  json: {\n    stato: 'completato',\n    intent: intent,\n    risposta_salvata: testoRisposta\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2336,
+        304
+      ],
+      "id": "0dc685aa-5aa1-43e5-98b8-75d485690149",
+      "name": "Salva in outbox"
+    },
+    {
+      "parameters": {
+        "jsCode": "const entita = $('Estrai JSON Alfred').item.json.entita;\n\nconst data = entita.data;\nconst ora = entita.ora;\n\nconst startDT = DateTime.fromISO(data, { zone: 'Europe/Rome' }).set({\n  hour: parseInt(ora.split(':')[0]),\n  minute: parseInt(ora.split(':')[1]),\n  second: 0\n});\n\nconst durataMinuti = parseInt(entita.durata_minuti) || 60;\nconst endDT = startDT.plus({ minutes: durataMinuti });\n\nreturn [{\n  json: {\n    title: entita.descrizione,\n    start: startDT.toFormat(\"yyyy-MM-dd'T'HH:mm:ss\"),\n    end: endDT.toFormat(\"yyyy-MM-dd'T'HH:mm:ss\"),\n    calendario: entita.calendario\n  }\n}];"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
         1248,
+        0
+      ],
+      "id": "54929076-5a00-4bdf-9142-35e68437f026",
+      "name": "Prepara dati evento"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "9110c54d-b977-44c6-8877-e322ccc96e2f",
+              "leftValue": "={{ $json.is_nuovo }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        128,
+        16
+      ],
+      "id": "7531bea6-84ba-4c2f-8403-35d0412186e6",
+      "name": "Deduplicazione messaggio"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "76fefc84-76b0-4786-81fe-90d3b71b1802",
+              "leftValue": "={{ $json.intent }}",
+              "rightValue": "crea_appuntamento",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1040,
         96
       ],
-      "id": "0dc685aa-5aa1-43e5-98b8-75d485690149",
-      "name": "Code in JavaScript3"
+      "id": "c331d980-4b82-4b74-93f2-c6d1d500e1c3",
+      "name": "Smista intent (crea_appuntamento?)"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "d0da18db-9314-42aa-9212-a9c88bd81aca",
+              "leftValue": "={{ $json.calendario }}",
+              "rightValue": "outlook",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1440,
+        0
+      ],
+      "id": "7a069592-7432-455c-9cfc-8be0865a3807",
+      "name": "Smista calendario (outlook/google?)"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://www.googleapis.com/calendar/v3/calendars/cesare.rizzo.vi%40gmail.com/events",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleCalendarOAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"summary\": \"{{ $json.title }}\",\n  \"start\": {\n    \"dateTime\": \"{{ $json.start }}\",\n    \"timeZone\": \"Europe/Rome\"\n  },\n  \"end\": {\n    \"dateTime\": \"{{ $json.end }}\",\n    \"timeZone\": \"Europe/Rome\"\n  }\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        1648,
+        176
+      ],
+      "id": "1a43f747-2a35-4739-b1c7-563d541914f4",
+      "name": "HTTP Request Google Calendar",
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "ug8CyLMU5NJ0P34d",
+          "name": "Google Calendar - Cesare"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://graph.microsoft.com/v1.0/me/calendars/AAMkADcyYWYwNzBhLTE0YzgtNDhkZi1hYTRkLWFiZjYzNDdhNTVjOABGAAAAAAB47B3Qtnq_TblwQ-ZXJpYKBwBObFWyR_VcR7TkZ2B47gUFAAAAAAEGAABObFWyR_VcR7TkZ2B47gUFAAAVKxMIAAA=/events",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "microsoftOutlookOAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"subject\": \"{{ $json.title }}\",\n  \"start\": {\n    \"dateTime\": \"{{ $json.start }}\",\n    \"timeZone\": \"Europe/Rome\"\n  },\n  \"end\": {\n    \"dateTime\": \"{{ $json.end }}\",\n    \"timeZone\": \"Europe/Rome\"\n  }\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        1632,
+        -160
+      ],
+      "id": "257a8c5a-21d9-4ea0-8fb0-15f765fc7b6e",
+      "name": "HTTP Request Outlook",
+      "credentials": {
+        "microsoftOutlookOAuth2Api": {
+          "id": "ca7yCMRSKLgEeAQK",
+          "name": "Microsoft Outlook account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "06bca6dc-4788-4ae1-8cd0-b39e2cc9b86e",
+              "leftValue": "={{ $json.intent }}",
+              "rightValue": "lista_giornata",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1264,
+        464
+      ],
+      "id": "6f3afbb8-564e-4ea7-b19a-0c8222d8b7c7",
+      "name": "Smista intent (lista_giornata?)"
+    },
+    {
+      "parameters": {
+        "url": "=https://graph.microsoft.com/v1.0/me/calendars/AAMkADcyYWYwNzBhLTE0YzgtNDhkZi1hYTRkLWFiZjYzNDdhNTVjOABGAAAAAAB47B3Qtnq_TblwQ-ZXJpYKBwBObFWyR_VcR7TkZ2B47gUFAAAAAAEGAABObFWyR_VcR7TkZ2B47gUFAAAVKxMIAAA=/calendarView?startDateTime={{ $json.timeMin }}&endDateTime={{ $json.timeMax }}&$orderby=start/dateTime&$top=50",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "microsoftOutlookOAuth2Api",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        1680,
+        800
+      ],
+      "id": "3c427ba0-e1b0-4f45-80b9-e5d5a0fbe661",
+      "name": "Leggi eventi Outlook",
+      "credentials": {
+        "microsoftOutlookOAuth2Api": {
+          "id": "ca7yCMRSKLgEeAQK",
+          "name": "Microsoft Outlook account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Recupera eventi Outlook salvati nel nodo intermedio\nconst eventiOutlook = $('Salva risultati Outlook').item.json.eventi_outlook || [];\n\n// Recupera eventi Google dall'input corrente\nconst eventiGoogle = [];\nconst items = $input.all();\n\nfor (const item of items) {\n  const data = item.json;\n  \n  // Nodo nativo Google Calendar — ogni evento è un item separato\n  if (data.id && data.summary !== undefined) {\n    eventiGoogle.push({\n      titolo: data.summary || 'Senza titolo',\n      inizio: data.start?.dateTime || data.start?.date || '',\n      fine: data.end?.dateTime || data.end?.date || '',\n      calendario: 'Google'\n    });\n  }\n  \n  // HTTP Request Google — risposta con campo \"items\"\n  if (data.items && Array.isArray(data.items)) {\n    for (const ev of data.items) {\n      eventiGoogle.push({\n        titolo: ev.summary || 'Senza titolo',\n        inizio: ev.start?.dateTime || ev.start?.date || '',\n        fine: ev.end?.dateTime || ev.end?.date || '',\n        calendario: 'Google'\n      });\n    }\n  }\n}\n\nconst filtro = $('Estrai JSON Alfred').item.json.entita.filtro_calendario || 'entrambi';\n\nlet eventi = [];\nif (filtro === 'outlook') {\n  eventi = eventiOutlook;\n} else if (filtro === 'google') {\n  eventi = eventiGoogle;\n} else {\n  eventi = [...eventiOutlook, ...eventiGoogle];\n}\n\neventi.sort((a, b) => new Date(a.inizio) - new Date(b.inizio));\n\nconst listaFormattata = eventi.map(ev => {\n  const inizio = ev.inizio ? DateTime.fromISO(ev.inizio, { zone: 'Europe/Rome' }).toFormat('dd/MM HH:mm') : '';\n  const fine = ev.fine ? DateTime.fromISO(ev.fine, { zone: 'Europe/Rome' }).toFormat('HH:mm') : '';\n  return `• ${inizio}-${fine} [${ev.calendario}] ${ev.titolo}`;\n}).join('\\n');\n\nconst testo = eventi.length > 0\n  ? `Ecco i tuoi appuntamenti:\\n${listaFormattata}`\n  : 'Non ho trovato appuntamenti nel periodo richiesto.';\n\nreturn [{\n  json: {\n    testo_risposta: testo\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2464,
+        720
+      ],
+      "id": "7b55f46f-5fcb-47e2-bf2d-03d6d6ddb86a",
+      "name": "Unisci e prepara lista appuntamenti"
+    },
+    {
+      "parameters": {
+        "jsCode": "const entita = $('Estrai JSON Alfred').item.json.entita;\n\nreturn [{\n  json: {\n    data_inizio: entita.data_inizio,\n    data_fine: entita.data_fine,\n    filtro_calendario: entita.filtro_calendario || 'entrambi',\n    timeMin: entita.data_inizio + 'T00:00:00Z',\n    timeMax: entita.data_fine + 'T23:59:59Z'\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1488,
+        672
+      ],
+      "id": "ad96d0b2-fba9-4fe3-a07a-d77b3c93ced5",
+      "name": "Prepara query calendario"
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "calendar": {
+          "__rl": true,
+          "value": "cesare.rizzo.vi@gmail.com",
+          "mode": "list",
+          "cachedResultName": "cesare.rizzo.vi@gmail.com"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.3,
+      "position": [
+        2080,
+        944
+      ],
+      "id": "24214008-bacd-43f2-8e91-9a7235a3a5fa",
+      "name": "Get many events",
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "ug8CyLMU5NJ0P34d",
+          "name": "Google Calendar - Cesare"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const outlookData = $input.first().json;\nconst eventi = [];\n\nif (outlookData.value && Array.isArray(outlookData.value)) {\n  for (const ev of outlookData.value) {\n    eventi.push({\n      titolo: ev.subject || 'Senza titolo',\n      inizio: ev.start?.dateTime || '',\n      fine: ev.end?.dateTime || '',\n      calendario: 'Outlook'\n    });\n  }\n}\n\nreturn [{\n  json: {\n    eventi_outlook: eventi\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1840,
+        976
+      ],
+      "id": "d2093958-7ae2-4bc8-8626-c0bc3faa451d",
+      "name": "Salva risultati Outlook"
     }
   ],
   "pinData": {},
   "connections": {
-    "Signal Trigger": {
+    "Ricevi messaggio Signal": {
       "main": [
         [
           {
-            "node": "Code in JavaScript",
+            "node": "Salva in inbox",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Code in JavaScript": {
+    "Salva in inbox": {
       "main": [
         [
           {
-            "node": "HTTP Request",
+            "node": "Deduplicazione messaggio",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "HTTP Request": {
+    "Chiama Alfred (Claude API)": {
       "main": [
         [
           {
-            "node": "Code in JavaScript1",
+            "node": "Estrai JSON Alfred",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Code in JavaScript1": {
+    "Estrai JSON Alfred": {
       "main": [
         [
           {
-            "node": "If",
+            "node": "Needs confirmation?",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "If": {
+    "Needs confirmation?": {
       "main": [
         [],
         [
           {
-            "node": "Code in JavaScript2",
+            "node": "Smista intent (crea_appuntamento?)",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Code in JavaScript2": {
+    "Invia risposta Signal": {
       "main": [
         [
           {
-            "node": "Code in JavaScript3",
+            "node": "Salva in outbox",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepara dati evento": {
+      "main": [
+        [
+          {
+            "node": "Smista calendario (outlook/google?)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Deduplicazione messaggio": {
+      "main": [
+        [
+          {
+            "node": "Chiama Alfred (Claude API)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Smista intent (crea_appuntamento?)": {
+      "main": [
+        [
+          {
+            "node": "Prepara dati evento",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Smista intent (lista_giornata?)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Smista calendario (outlook/google?)": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request Outlook",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "HTTP Request Google Calendar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request Google Calendar": {
+      "main": [
+        [
+          {
+            "node": "Invia risposta Signal",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request Outlook": {
+      "main": [
+        [
+          {
+            "node": "Invia risposta Signal",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Smista intent (lista_giornata?)": {
+      "main": [
+        [
+          {
+            "node": "Prepara query calendario",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Invia risposta Signal",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Leggi eventi Outlook": {
+      "main": [
+        [
+          {
+            "node": "Salva risultati Outlook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Unisci e prepara lista appuntamenti": {
+      "main": [
+        [
+          {
+            "node": "Invia risposta Signal",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepara query calendario": {
+      "main": [
+        [
+          {
+            "node": "Leggi eventi Outlook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get many events": {
+      "main": [
+        [
+          {
+            "node": "Unisci e prepara lista appuntamenti",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Salva risultati Outlook": {
+      "main": [
+        [
+          {
+            "node": "Get many events",
             "type": "main",
             "index": 0
           }
@@ -212,12 +657,12 @@
       ]
     }
   },
-  "active": false,
+  "active": true,
   "settings": {
     "executionOrder": "v1",
     "availableInMCP": false
   },
-  "versionId": "ecfa7382-03a8-4706-ba3f-1ff762df312c",
+  "versionId": "3808f26d-7978-4e2a-996d-9051698c3b3d",
   "meta": {
     "templateCredsSetupCompleted": true,
     "instanceId": "97e831daa831b2478c6e15942ecdaea506ad6ba802e16c1e1aa89d4dd0e2bb29"
