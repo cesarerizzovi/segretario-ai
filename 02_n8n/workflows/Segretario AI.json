@@ -54,7 +54,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"model\": \"claude-sonnet-4-20250514\",\n  \"max_tokens\": 1024,\n  \"system\": \"Sei Alfred, il segretario personale di Cesare Rizzo, dottore commercialista. Rispondi sempre in italiano, tono professionale ma cordiale, dai del tu a Cesare. Restituisci SOLO un oggetto JSON valido, senza backtick, senza markdown, senza testo aggiuntivo prima o dopo. La struttura e sempre questa: {\\\"intent\\\": \\\"domanda_generica\\\", \\\"testo_risposta\\\": \\\"la tua risposta\\\", \\\"needs_confirmation\\\": false, \\\"motivo_conferma\\\": \\\"\\\", \\\"entita\\\": {\\\"data\\\": null, \\\"ora\\\": null, \\\"durata_minuti\\\": 60, \\\"descrizione\\\": null, \\\"calendario\\\": null, \\\"priorita\\\": null, \\\"scadenza\\\": null, \\\"data_inizio\\\": null, \\\"data_fine\\\": null, \\\"filtro_calendario\\\": \\\"entrambi\\\"}}. Gli intent possibili sono: crea_appuntamento, crea_task, lista_giornata, completa_task, posticipa_task, snooze_oggi, domanda_generica. Per crea_appuntamento compila data in formato YYYY-MM-DD, ora in formato HH:MM, durata_minuti come numero intero (default 60 se non specificato), descrizione, calendario outlook o google. Regola smistamento calendario: se il contesto e lavorativo come clienti, riunioni, scadenze fiscali, pratiche, colleghi, studio imposta calendario outlook. Se il contesto e privato come medico, famiglia, amici, sport, viaggi, casa imposta calendario google. Imposta needs_confirmation true solo se mancano data o ora, mai per il calendario. Per crea_task compila descrizione, scadenza in formato YYYY-MM-DD o null, priorita alta media o bassa. Per lista_giornata compila data_inizio e data_fine in formato YYYY-MM-DD in base al periodo richiesto (oggi: stessa data per entrambi, settimana: da oggi a +6 giorni, mese: da oggi a +29 giorni), e filtro_calendario con outlook se chiede appuntamenti di lavoro, google se chiede appuntamenti privati, entrambi se non specifica. La data di oggi e={{ $now.setZone('Europe/Rome').toFormat('yyyy-MM-dd') }}. Le date dei prossimi giorni sono: {{ $('Salva in inbox').item.json.mappa_date }}. Quando l utente indica un giorno della settimana usa SEMPRE la data esatta dalla mappa qui sopra senza fare calcoli.\",\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"={{ $json.testo_originale }}\"\n    }\n  ]\n}",
+        "jsonBody": "={\n  \"model\": \"claude-sonnet-4-20250514\",\n  \"max_tokens\": 1024,\n  \"system\": \"Sei Alfred, il segretario personale di Cesare Rizzo, dottore commercialista. Rispondi sempre in italiano, tono professionale ma cordiale, dai del tu a Cesare. Restituisci SOLO un oggetto JSON valido, senza backtick, senza markdown, senza testo aggiuntivo prima o dopo. La struttura e sempre questa: {\\\"intent\\\": \\\"domanda_generica\\\", \\\"testo_risposta\\\": \\\"la tua risposta\\\", \\\"needs_confirmation\\\": false, \\\"motivo_conferma\\\": \\\"\\\", \\\"entita\\\": {\\\"data\\\": null, \\\"ora\\\": null, \\\"durata_minuti\\\": 60, \\\"descrizione\\\": null, \\\"calendario\\\": null, \\\"priorita\\\": null, \\\"scadenza\\\": null, \\\"data_inizio\\\": null, \\\"data_fine\\\": null, \\\"filtro_calendario\\\": \\\"entrambi\\\", \\\"filtro_task\\\": \\\"scadenza_settimana\\\"}}. Gli intent possibili sono: crea_appuntamento, crea_task, lista_giornata, lista_task, completa_task, posticipa_task, snooze_oggi, domanda_generica. Per crea_appuntamento compila data in formato YYYY-MM-DD, ora in formato HH:MM, durata_minuti come numero intero (default 60 se non specificato), descrizione, calendario outlook o google. Regola smistamento calendario: se il contesto e lavorativo come clienti, riunioni, scadenze fiscali, pratiche, colleghi, studio imposta calendario outlook. Se il contesto e privato come medico, famiglia, amici, sport, viaggi, casa imposta calendario google. Imposta needs_confirmation true solo se mancano data o ora, mai per il calendario. Per crea_task compila descrizione, scadenza in formato YYYY-MM-DD o null, priorita alta media o bassa. Per lista_giornata compila data_inizio e data_fine in formato YYYY-MM-DD in base al periodo richiesto (oggi: stessa data per entrambi, settimana: da oggi a +6 giorni, mese: da oggi a +29 giorni), e filtro_calendario con outlook se chiede appuntamenti di lavoro, google se chiede appuntamenti privati, entrambi se non specifica. Per lista_task compila filtro_task con: scadenza_settimana se non specifica periodo (default), urgenti se chiede task urgenti o alta priorita, arretrati se chiede task scaduti o arretrati, tutti se chiede tutti i task aperti. La data di oggi e={{ $now.setZone('Europe/Rome').toFormat('yyyy-MM-dd') }}. Le date dei prossimi giorni sono: {{ $('Salva in inbox').item.json.mappa_date }}. Quando l utente indica un giorno della settimana usa SEMPRE la data esatta dalla mappa qui sopra senza fare calcoli.\",\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"={{ $json.testo_originale }}\"\n    }\n  ]\n}",
         "options": {}
       },
       "type": "n8n-nodes-base.httpRequest",
@@ -351,16 +351,26 @@
         "url": "=https://graph.microsoft.com/v1.0/me/calendars/AAMkADcyYWYwNzBhLTE0YzgtNDhkZi1hYTRkLWFiZjYzNDdhNTVjOABGAAAAAAB47B3Qtnq_TblwQ-ZXJpYKBwBObFWyR_VcR7TkZ2B47gUFAAAAAAEGAABObFWyR_VcR7TkZ2B47gUFAAAVKxMIAAA=/calendarView?startDateTime={{ $json.timeMin }}&endDateTime={{ $json.timeMax }}&$orderby=start/dateTime&$top=50",
         "authentication": "predefinedCredentialType",
         "nodeCredentialType": "microsoftOutlookOAuth2Api",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Prefer",
+              "value": "outlook.timezone=\"Europe/Rome\""
+            }
+          ]
+        },
         "options": {}
       },
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.3,
       "position": [
-        1712,
+        1696,
         368
       ],
       "id": "3c427ba0-e1b0-4f45-80b9-e5d5a0fbe661",
       "name": "Leggi eventi Outlook",
+      "alwaysOutputData": true,
       "credentials": {
         "microsoftOutlookOAuth2Api": {
           "id": "ca7yCMRSKLgEeAQK",
@@ -370,7 +380,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Recupera eventi Outlook salvati nel nodo intermedio\nconst eventiOutlook = $('Salva risultati Outlook').item.json.eventi_outlook || [];\n\n// Recupera eventi Google dall'input corrente\nconst eventiGoogle = [];\nconst items = $input.all();\n\nfor (const item of items) {\n  const data = item.json;\n  \n  // Nodo nativo Google Calendar — ogni evento è un item separato\n  if (data.id && data.summary !== undefined) {\n    eventiGoogle.push({\n      titolo: data.summary || 'Senza titolo',\n      inizio: data.start?.dateTime || data.start?.date || '',\n      fine: data.end?.dateTime || data.end?.date || '',\n      calendario: 'Google'\n    });\n  }\n  \n  // HTTP Request Google — risposta con campo \"items\"\n  if (data.items && Array.isArray(data.items)) {\n    for (const ev of data.items) {\n      eventiGoogle.push({\n        titolo: ev.summary || 'Senza titolo',\n        inizio: ev.start?.dateTime || ev.start?.date || '',\n        fine: ev.end?.dateTime || ev.end?.date || '',\n        calendario: 'Google'\n      });\n    }\n  }\n}\n\nconst filtro = $('Estrai JSON Alfred').item.json.entita.filtro_calendario || 'entrambi';\n\nlet eventi = [];\nif (filtro === 'outlook') {\n  eventi = eventiOutlook;\n} else if (filtro === 'google') {\n  eventi = eventiGoogle;\n} else {\n  eventi = [...eventiOutlook, ...eventiGoogle];\n}\n\neventi.sort((a, b) => new Date(a.inizio) - new Date(b.inizio));\n\nconst listaFormattata = eventi.map(ev => {\n  const inizio = ev.inizio ? DateTime.fromISO(ev.inizio, { zone: 'Europe/Rome' }).toFormat('dd/MM HH:mm') : '';\n  const fine = ev.fine ? DateTime.fromISO(ev.fine, { zone: 'Europe/Rome' }).toFormat('HH:mm') : '';\n  return `• ${inizio}-${fine} [${ev.calendario}] ${ev.titolo}`;\n}).join('\\n');\n\nconst testo = eventi.length > 0\n  ? `Ecco i tuoi appuntamenti:\\n${listaFormattata}`\n  : 'Non ho trovato appuntamenti nel periodo richiesto.';\n\nreturn [{\n  json: {\n    testo_risposta: testo\n  }\n}];"
+        "jsCode": "// Recupera eventi Outlook salvati nel nodo intermedio\nconst eventiOutlook = $('Salva risultati Outlook').item.json.eventi_outlook || [];\n\n// Recupera date del periodo da Alfred\nconst dataInizio = $('Estrai JSON Alfred').item.json.entita.data_inizio;\nconst dataFine = $('Estrai JSON Alfred').item.json.entita.data_fine;\n\n// Recupera eventi Google dall'input corrente e filtra per periodo\nconst eventiGoogle = [];\nconst items = $input.all();\n\nfor (const item of items) {\n  const data = item.json;\n  if (data.id && data.summary !== undefined) {\n    const dataEvento = data.start?.dateTime?.slice(0,10) || data.start?.date?.slice(0,10) || '';\n    // Filtra solo eventi nel periodo richiesto\n    if (dataEvento >= dataInizio && dataEvento <= dataFine) {\n      eventiGoogle.push({\n        titolo: data.summary || 'Senza titolo',\n        inizio: data.start?.dateTime || data.start?.date || '',\n        fine: data.end?.dateTime || data.end?.date || '',\n        calendario: 'Google'\n      });\n    }\n  }\n}\n\nconst filtro = $('Estrai JSON Alfred').item.json.entita.filtro_calendario || 'entrambi';\n\nlet eventi = [];\nif (filtro === 'outlook') {\n  eventi = eventiOutlook;\n} else if (filtro === 'google') {\n  eventi = eventiGoogle;\n} else {\n  eventi = [...eventiOutlook, ...eventiGoogle];\n}\n\neventi.sort((a, b) => new Date(a.inizio) - new Date(b.inizio));\n\nconst listaFormattata = eventi.map(ev => {\n  const inizio = ev.inizio ? DateTime.fromISO(ev.inizio).setZone('Europe/Rome').toFormat('dd/MM HH:mm') : '';\n  const fine = ev.fine ? DateTime.fromISO(ev.fine).setZone('Europe/Rome').toFormat('HH:mm') : '';\n  return `• ${inizio}-${fine} [${ev.calendario}] ${ev.titolo}`;\n}).join('\\n');\n\nconst testo = eventi.length > 0\n  ? `Ecco i tuoi appuntamenti:\\n${listaFormattata}`\n  : 'Non ho trovato appuntamenti nel periodo richiesto.';\n\nreturn [{\n  json: {\n    testo_risposta: testo\n  }\n}];"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -396,38 +406,12 @@
     },
     {
       "parameters": {
-        "operation": "getAll",
-        "calendar": {
-          "__rl": true,
-          "value": "cesare.rizzo.vi@gmail.com",
-          "mode": "list",
-          "cachedResultName": "cesare.rizzo.vi@gmail.com"
-        },
-        "options": {}
-      },
-      "type": "n8n-nodes-base.googleCalendar",
-      "typeVersion": 1.3,
-      "position": [
-        2048,
-        368
-      ],
-      "id": "24214008-bacd-43f2-8e91-9a7235a3a5fa",
-      "name": "Get many events",
-      "credentials": {
-        "googleCalendarOAuth2Api": {
-          "id": "ug8CyLMU5NJ0P34d",
-          "name": "Google Calendar - Cesare"
-        }
-      }
-    },
-    {
-      "parameters": {
         "jsCode": "const outlookData = $input.first().json;\nconst eventi = [];\n\nif (outlookData.value && Array.isArray(outlookData.value)) {\n  for (const ev of outlookData.value) {\n    eventi.push({\n      titolo: ev.subject || 'Senza titolo',\n      inizio: ev.start?.dateTime || '',\n      fine: ev.end?.dateTime || '',\n      calendario: 'Outlook'\n    });\n  }\n}\n\nreturn [{\n  json: {\n    eventi_outlook: eventi\n  }\n}];"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1888,
+        1872,
         368
       ],
       "id": "d2093958-7ae2-4bc8-8626-c0bc3faa451d",
@@ -479,6 +463,82 @@
       ],
       "id": "7f41dcac-df52-4d6f-9342-d9be369adb3b",
       "name": "Crea task su SQLite"
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "calendar": {
+          "__rl": true,
+          "value": "cesare.rizzo.vi@gmail.com",
+          "mode": "list",
+          "cachedResultName": "cesare.rizzo.vi@gmail.com"
+        },
+        "timeMin": "={{ $('Prepara query calendario').item.json.timeMin }}",
+        "timeMax": "={{ $('Prepara query calendario').item.json.timeMax }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.3,
+      "position": [
+        2048,
+        368
+      ],
+      "id": "24214008-bacd-43f2-8e91-9a7235a3a5fa",
+      "name": "Leggi eventi Google Calendar",
+      "alwaysOutputData": true,
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "ug8CyLMU5NJ0P34d",
+          "name": "Google Calendar - Cesare"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "ac107a7a-99c9-4da7-9123-7be8c74cb205",
+              "leftValue": "={{ $json.intent }}",
+              "rightValue": "lista_task",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1712,
+        816
+      ],
+      "id": "38269c8b-3866-4df0-9c76-40a9ca61a290",
+      "name": "Smista intent (lista_task?)"
+    },
+    {
+      "parameters": {
+        "jsCode": "const sqlite3 = require('sqlite3').verbose();\n\nconst filtro = $('Estrai JSON Alfred').item.json.entita.filtro_task || 'scadenza_settimana';\n\nconst oggi = new Date(new Date().toLocaleString('en-US', { timeZone: 'Europe/Rome' }));\nconst oggiStr = `${oggi.getFullYear()}-${String(oggi.getMonth()+1).padStart(2,'0')}-${String(oggi.getDate()).padStart(2,'0')}`;\nconst fraSettimana = new Date(oggi.getTime() + 7 * 24 * 60 * 60 * 1000);\nconst fraSettimanaStr = `${fraSettimana.getFullYear()}-${String(fraSettimana.getMonth()+1).padStart(2,'0')}-${String(fraSettimana.getDate()).padStart(2,'0')}`;\n\nlet query = '';\nlet params = [];\n\nif (filtro === 'scadenza_settimana') {\n  query = `SELECT * FROM task WHERE stato = 'aperto' AND scadenza IS NOT NULL AND date(scadenza) <= ? ORDER BY scadenza ASC, priorita DESC`;\n  params = [fraSettimanaStr];\n} else if (filtro === 'urgenti') {\n  query = `SELECT * FROM task WHERE stato = 'aperto' AND priorita = 'alta' ORDER BY scadenza ASC`;\n  params = [];\n} else if (filtro === 'arretrati') {\n  query = `SELECT * FROM task WHERE stato = 'aperto' AND scadenza IS NOT NULL AND date(scadenza) < ? ORDER BY scadenza ASC`;\n  params = [oggiStr];\n} else {\n  query = `SELECT * FROM task WHERE stato = 'aperto' ORDER BY scadenza ASC, priorita DESC`;\n  params = [];\n}\n\nconst tasks = await new Promise((resolve, reject) => {\n  const db = new sqlite3.Database('/data/segretario.db');\n  db.all(query, params, function(err, rows) {\n    db.close();\n    if (err) reject(err);\n    else resolve(rows);\n  });\n});\n\nconst prioritaEmoji = { alta: '🔴', media: '🟡', bassa: '🟢' };\n\nconst listaFormattata = tasks.map(t => {\n  const scad = t.scadenza ? ` — scadenza ${t.scadenza.slice(0,10)}` : '';\n  const emoji = prioritaEmoji[t.priorita] || '⚪';\n  const arretrato = t.scadenza && t.scadenza.slice(0,10) < oggiStr ? ' ⚠️' : '';\n  return `${emoji} ${t.descrizione}${scad}${arretrato}`;\n}).join('\\n');\n\nconst intestazione = {\n  scadenza_settimana: 'task in scadenza questa settimana',\n  urgenti: 'task urgenti (alta priorità)',\n  arretrati: 'task arretrati',\n  tutti: 'task aperti'\n};\n\nconst testo = tasks.length > 0\n  ? `Ecco i tuoi ${intestazione[filtro]}:\\n\\n${listaFormattata}`\n  : `Non ho trovato ${intestazione[filtro]}.`;\n\nreturn [{\n  json: {\n    testo_risposta: testo\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1920,
+        720
+      ],
+      "id": "69b03873-f036-4ee0-928d-54462b6b6c97",
+      "name": "Code in JavaScript"
     }
   ],
   "pinData": {},
@@ -681,22 +741,11 @@
         ]
       ]
     },
-    "Get many events": {
-      "main": [
-        [
-          {
-            "node": "Unisci e prepara lista appuntamenti",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
     "Salva risultati Outlook": {
       "main": [
         [
           {
-            "node": "Get many events",
+            "node": "Leggi eventi Google Calendar",
             "type": "main",
             "index": 0
           }
@@ -714,7 +763,7 @@
         ],
         [
           {
-            "node": "Invia risposta Signal",
+            "node": "Smista intent (lista_task?)",
             "type": "main",
             "index": 0
           }
@@ -731,6 +780,46 @@
           }
         ]
       ]
+    },
+    "Leggi eventi Google Calendar": {
+      "main": [
+        [
+          {
+            "node": "Unisci e prepara lista appuntamenti",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Smista intent (lista_task?)": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Invia risposta Signal",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Invia risposta Signal",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "active": true,
@@ -738,7 +827,7 @@
     "executionOrder": "v1",
     "availableInMCP": false
   },
-  "versionId": "16e19a39-49b5-4242-ae45-9aabe8bb8f08",
+  "versionId": "5cd60fca-a733-4d21-a499-f42809426c1b",
   "meta": {
     "templateCredsSetupCompleted": true,
     "instanceId": "97e831daa831b2478c6e15942ecdaea506ad6ba802e16c1e1aa89d4dd0e2bb29"
