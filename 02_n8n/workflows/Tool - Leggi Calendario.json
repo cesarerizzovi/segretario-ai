@@ -1,0 +1,167 @@
+{
+  "name": "Tool - Leggi Calendario",
+  "nodes": [
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "tipo"
+            },
+            {
+              "name": "valore"
+            },
+            {
+              "name": "filtro_calendario"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "91a97656-ff7a-495f-9bda-1fd895f3b118",
+      "name": "When Executed by Another Workflow"
+    },
+    {
+      "parameters": {
+        "url": "=https://graph.microsoft.com/v1.0/me/calendarView?startDateTime={{ $json.dataInizio }}T00:00:00&endDateTime={{ $json.dataFine }}T23:59:59",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "microsoftOutlookOAuth2Api",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Prefer",
+              "value": "outlook.timezone=\"Europe/Rome\""
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        416,
+        0
+      ],
+      "id": "c7245911-d676-49ce-a3b4-bf341e827f71",
+      "name": "Leggi Outlook",
+      "credentials": {
+        "microsoftOutlookOAuth2Api": {
+          "id": "ca7yCMRSKLgEeAQK",
+          "name": "Microsoft Outlook account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "=https://www.googleapis.com/calendar/v3/calendars/primary/events?timeMin={{ $('Prepara Filtro').item.json.dataInizio }}T00:00:00Z&timeMax={{ $('Prepara Filtro').item.json.dataFine }}T23:59:59Z&singleEvents=true&orderBy=startTime",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleCalendarOAuth2Api",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        624,
+        0
+      ],
+      "id": "aabef27c-340c-4bdc-9ef6-8b96d5a0c862",
+      "name": "Leggi Google",
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "ug8CyLMU5NJ0P34d",
+          "name": "Google Calendar - Cesare"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const filtro = $('Prepara Filtro').item.json.filtro;\nconst dataInizio = $('Prepara Filtro').item.json.dataInizio;\nconst dataFine = $('Prepara Filtro').item.json.dataFine;\n\nconst eventi = [];\n\n// Leggi eventi Outlook\nif (filtro === 'outlook' || filtro === 'entrambi') {\n  const outlookData = $('Leggi Outlook').item.json;\n  const outlookEventi = outlookData.value || [];\n  for (const ev of outlookEventi) {\n    eventi.push({\n      calendario: 'Outlook',\n      titolo: ev.subject || '(senza titolo)',\n      inizio: ev.start?.dateTime?.slice(0, 16).replace('T', ' ') || '',\n      fine: ev.end?.dateTime?.slice(0, 16).replace('T', ' ') || ''\n    });\n  }\n}\n\n// Leggi eventi Google\nif (filtro === 'google' || filtro === 'entrambi') {\n  const googleData = $('Leggi Google').item.json;\n  const googleEventi = googleData.items || [];\n  for (const ev of googleEventi) {\n    eventi.push({\n      calendario: 'Google',\n      titolo: ev.summary || '(senza titolo)',\n      inizio: ev.start?.dateTime?.slice(0, 16).replace('T', ' ') || ev.start?.date || '',\n      fine: ev.end?.dateTime?.slice(0, 16).replace('T', ' ') || ev.end?.date || ''\n    });\n  }\n}\n\n// Ordina per orario di inizio\neventi.sort((a, b) => a.inizio.localeCompare(b.inizio));\n\nif (eventi.length === 0) {\n  return [{ json: { output: `Nessun evento trovato dal ${dataInizio} al ${dataFine}.` } }];\n}\n\nconst lista = eventi.map(e => \n  `[${e.calendario}] ${e.titolo} — ${e.inizio}`\n).join('\\n');\n\nreturn [{ json: { \n  output: `Eventi dal ${dataInizio} al ${dataFine}:\\n${lista}`\n} }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        832,
+        0
+      ],
+      "id": "509e861d-764d-4afe-a7af-4983e5f5e18d",
+      "name": "Unisci risultati"
+    },
+    {
+      "parameters": {
+        "jsCode": "const tipo = $input.first().json.tipo || 'relativo';\nconst valore = ($input.first().json.valore || 'oggi').toLowerCase();\nconst filtro = $input.first().json.filtro_calendario || 'entrambi';\n\nconst oggi = DateTime.now().setZone('Europe/Rome');\nlet dataInizio, dataFine;\n\nif (tipo === 'relativo') {\n  if (valore === 'oggi') {\n    dataInizio = oggi.toFormat('yyyy-MM-dd');\n    dataFine = oggi.toFormat('yyyy-MM-dd');\n  } else if (valore === 'domani') {\n    const domani = oggi.plus({ days: 1 });\n    dataInizio = domani.toFormat('yyyy-MM-dd');\n    dataFine = domani.toFormat('yyyy-MM-dd');\n  } else if (valore === 'questa_settimana') {\n    dataInizio = oggi.startOf('week').toFormat('yyyy-MM-dd');\n    dataFine = oggi.endOf('week').toFormat('yyyy-MM-dd');\n  } else if (valore === 'prossima_settimana') {\n    const prossima = oggi.plus({ weeks: 1 });\n    dataInizio = prossima.startOf('week').toFormat('yyyy-MM-dd');\n    dataFine = prossima.endOf('week').toFormat('yyyy-MM-dd');\n  } else {\n    dataInizio = oggi.toFormat('yyyy-MM-dd');\n    dataFine = oggi.toFormat('yyyy-MM-dd');\n  }\n} else {\n  // tipo === 'assoluto': valore è già una data YYYY-MM-DD\n  dataInizio = valore;\n  dataFine = valore;\n}\n\nreturn [{ json: { \n  filtro,\n  dataInizio,\n  dataFine,\n  leggi_outlook: filtro === 'outlook' || filtro === 'entrambi',\n  leggi_google: filtro === 'google' || filtro === 'entrambi'\n} }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        208,
+        0
+      ],
+      "id": "e19b86a5-b00c-45bc-a33f-93e68249451c",
+      "name": "Prepara Filtro"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Prepara Filtro",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Leggi Outlook": {
+      "main": [
+        [
+          {
+            "node": "Leggi Google",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Leggi Google": {
+      "main": [
+        [
+          {
+            "node": "Unisci risultati",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepara Filtro": {
+      "main": [
+        [
+          {
+            "node": "Leggi Outlook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": false
+  },
+  "versionId": "877233a1-6b21-48bf-a180-d12d5b6a8a2e",
+  "meta": {
+    "instanceId": "97e831daa831b2478c6e15942ecdaea506ad6ba802e16c1e1aa89d4dd0e2bb29"
+  },
+  "id": "WG74gUEyFFVAFHS5",
+  "tags": []
+}

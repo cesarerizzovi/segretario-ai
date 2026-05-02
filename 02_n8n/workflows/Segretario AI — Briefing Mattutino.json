@@ -1,0 +1,210 @@
+{
+  "name": "Segretario AI — Briefing Mattutino",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 7 * * *"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        0,
+        0
+      ],
+      "id": "0283132b-b85c-4b89-a21b-25a0ad70d487",
+      "name": "Schedule Trigger"
+    },
+    {
+      "parameters": {
+        "jsCode": "const sqlite3 = require('sqlite3').verbose();\n\nconst oggi = new Date(new Date().toLocaleString('en-US', { timeZone: 'Europe/Rome' }));\nconst oggiStr = `${oggi.getFullYear()}-${String(oggi.getMonth()+1).padStart(2,'0')}-${String(oggi.getDate()).padStart(2,'0')}`;\n\nconst tasks = await new Promise((resolve, reject) => {\n  const db = new sqlite3.Database('/data/segretario.db');\n  db.all(\n    `SELECT descrizione, scadenza, priorita, reminder_count \n     FROM task \n     WHERE stato = 'aperto'\n     AND (scadenza IS NULL OR date(scadenza) <= ?)\n     ORDER BY priorita DESC, scadenza ASC\n     LIMIT 20`,\n    [oggiStr],\n    function(err, rows) {\n      db.close();\n      if (err) reject(err);\n      else resolve(rows);\n    }\n  );\n});\n\nconst taskFormattati = tasks.map(t => {\n  const scad = t.scadenza ? ` (scadenza: ${t.scadenza.slice(0,10)})` : ' (nessuna scadenza)';\n  const arretrato = t.reminder_count > 0 ? ` [${t.reminder_count} solleciti]` : '';\n  return `- ${t.descrizione}${scad} [${t.priorita}]${arretrato}`;\n}).join('\\n');\n\nreturn [{\n  json: {\n    data_oggi: oggiStr,\n    task_aperti: taskFormattati || 'Nessun task in scadenza oggi.',\n    task_count: tasks.length\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        208,
+        0
+      ],
+      "id": "0df5646b-70ad-4f27-bab6-359bdfb80c44",
+      "name": "Leggi task oggi"
+    },
+    {
+      "parameters": {
+        "url": "=https://graph.microsoft.com/v1.0/me/calendars/AAMkADcyYWYwNzBhLTE0YzgtNDhkZi1hYTRkLWFiZjYzNDdhNTVjOABGAAAAAAB47B3Qtnq_TblwQ-ZXJpYKBwBObFWyR_VcR7TkZ2B47gUFAAAAAAEGAABObFWyR_VcR7TkZ2B47gUFAAAVKxMIAAA=/calendarView?startDateTime={{ $json.data_oggi }}T00:00:00&endDateTime={{ $json.data_oggi }}T23:59:59&$orderby=start/dateTime&$top=20",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "microsoftOutlookOAuth2Api",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        384,
+        0
+      ],
+      "id": "55da3beb-638f-45b6-908f-aa534bdaa74c",
+      "name": "Briefing Leggi Outlook",
+      "credentials": {
+        "microsoftOutlookOAuth2Api": {
+          "id": "ca7yCMRSKLgEeAQK",
+          "name": "Microsoft Outlook account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const outlookData = $input.first().json;\nconst eventi = [];\n\nif (outlookData.value && Array.isArray(outlookData.value)) {\n  for (const ev of outlookData.value) {\n    const inizio = ev.start?.dateTime ? \n      new Date(ev.start.dateTime).toLocaleTimeString('it-IT', {hour:'2-digit', minute:'2-digit', timeZone:'Europe/Rome'}) : '';\n    eventi.push(`- ${inizio} ${ev.subject || 'Senza titolo'} [Outlook]`);\n  }\n}\n\nreturn [{\n  json: {\n    eventi_outlook: eventi.join('\\n') || '',\n    data_oggi: $('Leggi task oggi').item.json.data_oggi,\n    task_aperti: $('Leggi task oggi').item.json.task_aperti,\n    task_count: $('Leggi task oggi').item.json.task_count\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        576,
+        0
+      ],
+      "id": "a91e6d3d-6d89-4b05-8552-5e001a3bcc1e",
+      "name": "Salva risultati Outlook Briefing"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Dati Outlook dal nodo intermedio\nconst eventiOutlook = $('Salva risultati Outlook Briefing').item.json.eventi_outlook || '';\nconst dataOggi = $('Salva risultati Outlook Briefing').item.json.data_oggi;\nconst taskAperti = $('Salva risultati Outlook Briefing').item.json.task_aperti;\nconst taskCount = $('Salva risultati Outlook Briefing').item.json.task_count;\n\n// Dati Google dall'input corrente (in serie dopo Salva risultati Outlook Briefing)\nconst eventiGoogle = [];\nconst items = $input.all();\n\nfor (const item of items) {\n  const data = item.json;\n  if (data.id && data.summary !== undefined) {\n    const dataEvento = data.start?.dateTime?.slice(0,10) || data.start?.date?.slice(0,10) || '';\n    if (dataEvento === dataOggi) {\n      const inizio = data.start?.dateTime ?\n        DateTime.fromISO(data.start.dateTime).setZone('Europe/Rome').toFormat('HH:mm') : '';\n      eventiGoogle.push(`- ${inizio} ${data.summary || 'Senza titolo'} [Google]`);\n    }\n  }\n}\n\nconst tuttiEventi = [eventiOutlook, ...eventiGoogle].filter(e => e).join('\\n');\n\nconst oggi = new Date(new Date().toLocaleString('en-US', { timeZone: 'Europe/Rome' }));\nconst giorni = ['domenica','lunedì','martedì','mercoledì','giovedì','venerdì','sabato'];\nconst mesi = ['gennaio','febbraio','marzo','aprile','maggio','giugno','luglio','agosto','settembre','ottobre','novembre','dicembre'];\nconst nomeGiorno = giorni[oggi.getDay()];\nconst dataFormattata = `${nomeGiorno} ${oggi.getDate()} ${mesi[oggi.getMonth()]} ${oggi.getFullYear()}`;\n\nconst testo = `Buongiorno Cesare! 🌅 Oggi è ${dataFormattata}.\n\n📅 APPUNTAMENTI DI OGGI:\n${tuttiEventi || 'Nessun appuntamento oggi.'}\n\n✅ TASK IN SCADENZA:\n${taskAperti}\n\n${taskCount > 0 ? `Hai ${taskCount} task aperti da completare oggi. Buona giornata!` : 'Nessun task in scadenza oggi. Buona giornata!'}`;\n\nreturn [{\n  json: {\n    testo_risposta: testo\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        992,
+        0
+      ],
+      "id": "1c875834-6f6c-425a-86b7-007f86dee680",
+      "name": "Componi briefing"
+    },
+    {
+      "parameters": {
+        "jsCode": "const http = require('http');\n\nconst testo = $input.first().json.testo_risposta;\nconst destinatario = '+393495931632'; // sostituisci con il tuo numero personale\n\nconst payload = JSON.stringify({\n  message: testo,\n  number: '+393517872627',\n  recipients: [destinatario]\n});\n\nawait new Promise((resolve, reject) => {\n  const options = {\n    hostname: 'segretario_signal_cli',\n    port: 8080,\n    path: '/v2/send',\n    method: 'POST',\n    headers: {\n      'Content-Type': 'application/json',\n      'Content-Length': Buffer.byteLength(payload)\n    }\n  };\n\n  const req = http.request(options, (res) => {\n    let data = '';\n    res.on('data', chunk => data += chunk);\n    res.on('end', () => {\n      if (res.statusCode === 200 || res.statusCode === 201) {\n        resolve(data);\n      } else {\n        reject(new Error(`Status ${res.statusCode}: ${data}`));\n      }\n    });\n  });\n\n  req.on('error', reject);\n  req.write(payload);\n  req.end();\n});\n\nreturn [{\n  json: {\n    stato: 'briefing inviato',\n    data: $('Salva risultati Outlook Briefing').item.json.data_oggi\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1168,
+        0
+      ],
+      "id": "fec406c8-527b-4567-9daf-2bba16c7bd6b",
+      "name": "Invia briefing Signal"
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "calendar": {
+          "__rl": true,
+          "value": "cesare.rizzo.vi@gmail.com",
+          "mode": "list",
+          "cachedResultName": "cesare.rizzo.vi@gmail.com"
+        },
+        "returnAll": true,
+        "timeMin": "={{ $now.setZone('Europe/Rome').startOf('day').toUTC().toISO({ suppressMilliseconds: true }) }}",
+        "timeMax": "={{ $now.setZone('Europe/Rome').endOf('day').toUTC().toISO({ suppressMilliseconds: true }) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.3,
+      "position": [
+        768,
+        0
+      ],
+      "id": "95fea9d7-96c3-43ea-bf15-bb67732a2c51",
+      "name": "Briefing Leggi Google",
+      "alwaysOutputData": true,
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "ug8CyLMU5NJ0P34d",
+          "name": "Google Calendar - Cesare"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Leggi task oggi",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Leggi task oggi": {
+      "main": [
+        [
+          {
+            "node": "Briefing Leggi Outlook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Briefing Leggi Outlook": {
+      "main": [
+        [
+          {
+            "node": "Salva risultati Outlook Briefing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Salva risultati Outlook Briefing": {
+      "main": [
+        [
+          {
+            "node": "Briefing Leggi Google",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Componi briefing": {
+      "main": [
+        [
+          {
+            "node": "Invia briefing Signal",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Briefing Leggi Google": {
+      "main": [
+        [
+          {
+            "node": "Componi briefing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": false
+  },
+  "versionId": "bf1c4f5b-ae71-45df-bba3-3001b0a9ce2f",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "97e831daa831b2478c6e15942ecdaea506ad6ba802e16c1e1aa89d4dd0e2bb29"
+  },
+  "id": "rl85RXWQmnnaTKZ-4uRpf",
+  "tags": []
+}

@@ -1,0 +1,62 @@
+{
+  "name": "Tool - Lista Task",
+  "nodes": [
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "filtro"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "056e2562-c3b1-45c0-aedc-a878246da9b1",
+      "name": "When Executed by Another Workflow"
+    },
+    {
+      "parameters": {
+        "jsCode": "const sqlite3 = require('sqlite3').verbose();\n\nconst filtro = $input.first().json.filtro || 'scadenza_settimana';\n\nconst oggi = new Date(new Date().toLocaleString('en-US', { timeZone: 'Europe/Rome' }));\nconst oggiStr = `${oggi.getFullYear()}-${String(oggi.getMonth()+1).padStart(2,'0')}-${String(oggi.getDate()).padStart(2,'0')}`;\nconst fraSettimana = new Date(oggi.getTime() + 7 * 24 * 60 * 60 * 1000);\nconst fraSettimanaStr = `${fraSettimana.getFullYear()}-${String(fraSettimana.getMonth()+1).padStart(2,'0')}-${String(fraSettimana.getDate()).padStart(2,'0')}`;\n\nlet query = '';\nlet params = [];\n\nif (filtro === 'scadenza_settimana') {\n  query = `SELECT * FROM task WHERE stato = 'aperto' AND scadenza IS NOT NULL AND date(scadenza) <= ? ORDER BY scadenza ASC`;\n  params = [fraSettimanaStr];\n} else if (filtro === 'urgenti') {\n  query = `SELECT * FROM task WHERE stato = 'aperto' AND priorita = 'alta' ORDER BY scadenza ASC`;\n} else if (filtro === 'arretrati') {\n  query = `SELECT * FROM task WHERE stato = 'aperto' AND scadenza IS NOT NULL AND date(scadenza) < ? ORDER BY scadenza ASC`;\n  params = [oggiStr];\n} else {\n  query = `SELECT * FROM task WHERE stato = 'aperto' ORDER BY scadenza ASC`;\n}\n\nconst tasks = await new Promise((resolve, reject) => {\n  const db = new sqlite3.Database('/data/segretario.db');\n  db.all(query, params, function(err, rows) {\n    db.close();\n    if (err) reject(err);\n    else resolve(rows);\n  });\n});\n\nif (tasks.length === 0) {\n  return [{ json: { output: `Nessun task trovato per filtro: ${filtro}.` } }];\n}\n\nconst lista = tasks.map(t => {\n  const scad = t.scadenza ? `, scadenza ${t.scadenza.slice(0,10)}` : ', nessuna scadenza';\n  const arretrato = t.scadenza && t.scadenza.slice(0,10) < oggiStr ? ' [ARRETRATO]' : '';\n  return `ID ${t.id}: \"${t.descrizione}\" - priorità ${t.priorita}${scad}${arretrato}`;\n}).join('\\n');\n\nreturn [{ json: { \n  output: `Trovati ${tasks.length} task (filtro: ${filtro}):\\n${lista}`\n} }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        208,
+        0
+      ],
+      "id": "101e78f0-d1f2-4257-8446-10b2c86e2af0",
+      "name": "Code in JavaScript"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": false
+  },
+  "versionId": "a759d5b1-0b5c-4601-ad5b-4d2e6af911b3",
+  "meta": {
+    "instanceId": "97e831daa831b2478c6e15942ecdaea506ad6ba802e16c1e1aa89d4dd0e2bb29"
+  },
+  "id": "GSKC8CCbIKOkC1Zj",
+  "tags": []
+}

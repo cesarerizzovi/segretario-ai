@@ -1,0 +1,68 @@
+{
+  "name": "Tool - Crea Task",
+  "nodes": [
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "descrizione"
+            },
+            {
+              "name": "scadenza"
+            },
+            {
+              "name": "priorita"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "9f41e951-75bc-43cd-9765-f7c9ff6e7c84",
+      "name": "When Executed by Another Workflow"
+    },
+    {
+      "parameters": {
+        "jsCode": "const sqlite3 = require('sqlite3').verbose();\n\nconst descrizione = $input.first().json.descrizione || '';\nconst scadenza = $input.first().json.scadenza || null;\nconst priorita = $input.first().json.priorita || 'media';\nconst sourceMessageId = $input.first().json.signal_message_id || '';\n\nif (!descrizione) {\n  return [{ json: { output: 'Errore: descrizione del task mancante.' } }];\n}\n\nconst oggi = new Date(new Date().toLocaleString('en-US', { timeZone: 'Europe/Rome' }));\nlet nextFollowup;\nif (scadenza) {\n  nextFollowup = scadenza + 'T09:00:00';\n} else {\n  const domani = new Date(oggi);\n  domani.setDate(oggi.getDate() + 1);\n  const anno = domani.getFullYear();\n  const mese = String(domani.getMonth() + 1).padStart(2, '0');\n  const giorno = String(domani.getDate()).padStart(2, '0');\n  nextFollowup = `${anno}-${mese}-${giorno}T09:00:00`;\n}\n\nconst taskId = await new Promise((resolve, reject) => {\n  const db = new sqlite3.Database('/data/segretario.db');\n  db.run(\n    `INSERT INTO task \n     (descrizione, scadenza, priorita, stato, reminder_count, next_followup_at, source_message_id, creato_il, updated_at)\n     VALUES (?, ?, ?, 'aperto', 0, ?, ?, datetime('now'), datetime('now'))`,\n    [descrizione, scadenza, priorita, nextFollowup, sourceMessageId],\n    function(err) {\n      db.close();\n      if (err) reject(err);\n      else resolve(this.lastID);\n    }\n  );\n});\n\nreturn [{ json: { \n  output: `Task creato con ID ${taskId}: \"${descrizione}\", scadenza ${scadenza || 'nessuna'}, priorità ${priorita}.`\n} }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        208,
+        0
+      ],
+      "id": "bf8fc04a-7efe-4abe-b515-e07fe122ac58",
+      "name": "Code in JavaScript"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": false
+  },
+  "versionId": "90a56e1b-fcbc-4b1c-b51b-360ef41cd447",
+  "meta": {
+    "instanceId": "97e831daa831b2478c6e15942ecdaea506ad6ba802e16c1e1aa89d4dd0e2bb29"
+  },
+  "id": "HXm-aDV8Qsmbeu_eQJhka",
+  "tags": []
+}

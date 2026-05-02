@@ -8,7 +8,7 @@
       "type": "n8n-nodes-signal-cli-rest-api.signalTrigger",
       "typeVersion": 1,
       "position": [
-        -272,
+        -704,
         16
       ],
       "id": "6f3cd4ff-85a1-413f-a69e-65676b0fdef6",
@@ -22,12 +22,12 @@
     },
     {
       "parameters": {
-        "jsCode": "const sqlite3 = require('sqlite3').verbose();\n\nconst item = $input.first().json;\n\nconst signalMessageId = String(item.envelope?.timestamp || Date.now());\nconst testoOriginale = item.messageText || item.envelope?.dataMessage?.message || '';\nconst tipo = (item.attachments && item.attachments.length > 0) ? 'vocale' : 'testo';\n\n// Calcola le date dei prossimi 7 giorni in Europe/Rome\nconst giorniSettimana = ['domenica','lunedi','martedi','mercoledi','giovedi','venerdi','sabato'];\nconst oggi = new Date(new Date().toLocaleString('en-US', { timeZone: 'Europe/Rome' }));\nconst mappaDate = {};\nfor (let i = 1; i <= 7; i++) {\n  const d = new Date(oggi);\n  d.setDate(oggi.getDate() + i);\n  const nomeGiorno = giorniSettimana[d.getDay()];\n  const anno = d.getFullYear();\n  const mese = String(d.getMonth() + 1).padStart(2, '0');\n  const giorno = String(d.getDate()).padStart(2, '0');\n  mappaDate[nomeGiorno] = `${anno}-${mese}-${giorno}`;\n}\nconst mappaDateStringa = Object.entries(mappaDate)\n  .map(([g, d]) => `${g}=${d}`)\n  .join(' ');\n\nconst isNuovo = await new Promise((resolve, reject) => {\n  const db = new sqlite3.Database('/data/segretario.db');\n  db.run(\n    `INSERT OR IGNORE INTO messages_inbox \n     (signal_message_id, testo_originale, tipo, stato_elaborazione) \n     VALUES (?, ?, ?, 'ricevuto')`,\n    [signalMessageId, testoOriginale, tipo],\n    function(err) {\n      db.close();\n      if (err) reject(err);\n      else resolve(this.changes > 0);\n    }\n  );\n});\n\nreturn [{\n  json: {\n    signal_message_id: signalMessageId,\n    testo_originale: testoOriginale,\n    tipo: tipo,\n    mittente: item.envelope?.source || '',\n    nome_mittente: item.sourceName || '',\n    is_nuovo: isNuovo,\n    mappa_date: mappaDateStringa\n  }\n}];"
+        "jsCode": "const sqlite3 = require('sqlite3').verbose();\n\nconst item = $input.first().json;\n\nconst signalMessageId = String(item.envelope?.timestamp || Date.now());\nconst testoOriginale = item.messageText || item.envelope?.dataMessage?.message || '';\nconst tipo = (item.attachments && item.attachments.length > 0) ? 'vocale' : 'testo';\n\nconst giorniSettimana = ['domenica','lunedì','martedì','mercoledì','giovedì','venerdì','sabato'];\nconst oggi = new Date(new Date().toLocaleString('en-US', { timeZone: 'Europe/Rome' }));\nconst righe = [];\n\nfor (let i = 1; i <= 7; i++) {\n  const d = new Date(oggi);\n  d.setDate(oggi.getDate() + i);\n  const nome = giorniSettimana[d.getDay()];\n  const anno = d.getFullYear();\n  const mese = String(d.getMonth() + 1).padStart(2, '0');\n  const giorno = String(d.getDate()).padStart(2, '0');\n  righe.push(`- ${nome}: ${anno}-${mese}-${giorno}`);\n}\n\nconst giornoOggi = oggi.getDay();\nconst lunediQuesta = new Date(oggi);\nlunediQuesta.setDate(oggi.getDate() - giornoOggi + (giornoOggi === 0 ? -6 : 1));\nconst domenicaQuesta = new Date(lunediQuesta);\ndomenicaQuesta.setDate(lunediQuesta.getDate() + 6);\n\nconst lunediProssima = new Date(lunediQuesta);\nlunediProssima.setDate(lunediQuesta.getDate() + 7);\nconst domenicaProssima = new Date(lunediProssima);\ndomenicaProssima.setDate(lunediProssima.getDate() + 6);\n\nconst fmt = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;\n\nconst mappaDateStringa = righe.join('\\n') +\n  `\\n- questa_settimana: [${fmt(lunediQuesta)} TO ${fmt(domenicaQuesta)}]` +\n  `\\n- prossima_settimana: [${fmt(lunediProssima)} TO ${fmt(domenicaProssima)}]`;\n\nconst storicoConversazione = await new Promise((resolve, reject) => {\n  const db = new sqlite3.Database('/data/segretario.db');\n  db.all(\n    `SELECT role, content FROM conversazione ORDER BY creato_il DESC LIMIT 10`,\n    [],\n    function(err, rows) {\n      db.close();\n      if (err) reject(err);\n      else resolve(rows.reverse());\n    }\n  );\n});\n\nconst isNuovo = await new Promise((resolve, reject) => {\n  const db = new sqlite3.Database('/data/segretario.db');\n  db.run(\n    `INSERT OR IGNORE INTO messages_inbox \n     (signal_message_id, testo_originale, tipo, stato_elaborazione) \n     VALUES (?, ?, ?, 'ricevuto')`,\n    [signalMessageId, testoOriginale, tipo],\n    function(err) {\n      db.close();\n      if (err) reject(err);\n      else resolve(this.changes > 0);\n    }\n  );\n});\n\nif (isNuovo) {\n  await new Promise((resolve, reject) => {\n    const db = new sqlite3.Database('/data/segretario.db');\n    db.run(\n      `INSERT INTO conversazione (role, content) VALUES ('user', ?)`,\n      [testoOriginale],\n      function(err) {\n        db.close();\n        if (err) reject(err);\n        else resolve();\n      }\n    );\n  });\n}\n\nreturn [{\n  json: {\n    signal_message_id: signalMessageId,\n    testo_originale: testoOriginale,\n    tipo: tipo,\n    mittente: item.envelope?.source || '',\n    nome_mittente: item.sourceName || '',\n    is_nuovo: isNuovo,\n    mappa_date: mappaDateStringa,\n    storico_conversazione: storicoConversazione,\n    attachments: item.attachments || []\n  }\n}];"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        -64,
+        -512,
         16
       ],
       "id": "48480e90-fbab-49e3-909e-8c7d5ca3badf",
@@ -35,128 +35,29 @@
     },
     {
       "parameters": {
-        "method": "POST",
-        "url": "https://api.anthropic.com/v1/messages",
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "anthropic-version",
-              "value": "2023-06-01"
-            },
-            {
-              "name": "content-type",
-              "value": "application/json"
-            }
-          ]
-        },
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={\n  \"model\": \"claude-sonnet-4-20250514\",\n  \"max_tokens\": 1024,\n  \"system\": \"Sei Alfred, il segretario personale di Cesare Rizzo, dottore commercialista. Rispondi sempre in italiano, tono professionale ma cordiale, dai del tu a Cesare. Restituisci SOLO un oggetto JSON valido, senza backtick, senza markdown, senza testo aggiuntivo prima o dopo. La struttura e sempre questa: {\\\"intent\\\": \\\"domanda_generica\\\", \\\"testo_risposta\\\": \\\"la tua risposta\\\", \\\"needs_confirmation\\\": false, \\\"motivo_conferma\\\": \\\"\\\", \\\"entita\\\": {\\\"data\\\": null, \\\"ora\\\": null, \\\"durata_minuti\\\": 60, \\\"descrizione\\\": null, \\\"calendario\\\": null, \\\"priorita\\\": null, \\\"scadenza\\\": null, \\\"data_inizio\\\": null, \\\"data_fine\\\": null, \\\"filtro_calendario\\\": \\\"entrambi\\\", \\\"filtro_task\\\": \\\"scadenza_settimana\\\"}}. Gli intent possibili sono: crea_appuntamento, crea_task, lista_giornata, lista_task, completa_task, posticipa_task, snooze_oggi, domanda_generica. Per crea_appuntamento compila data in formato YYYY-MM-DD, ora in formato HH:MM, durata_minuti come numero intero (default 60 se non specificato), descrizione, calendario outlook o google. Regola smistamento calendario: se il contesto e lavorativo come clienti, riunioni, scadenze fiscali, pratiche, colleghi, studio imposta calendario outlook. Se il contesto e privato come medico, famiglia, amici, sport, viaggi, casa imposta calendario google. Imposta needs_confirmation true solo se mancano data o ora, mai per il calendario. Per crea_task compila descrizione, scadenza in formato YYYY-MM-DD o null, priorita alta media o bassa. Per lista_giornata compila data_inizio e data_fine in formato YYYY-MM-DD in base al periodo richiesto (oggi: stessa data per entrambi, settimana: da oggi a +6 giorni, mese: da oggi a +29 giorni), e filtro_calendario con outlook se chiede appuntamenti di lavoro, google se chiede appuntamenti privati, entrambi se non specifica. Per lista_task compila filtro_task con: scadenza_settimana se non specifica periodo (default), urgenti se chiede task urgenti o alta priorita, arretrati se chiede task scaduti o arretrati, tutti se chiede tutti i task aperti. La data di oggi e={{ $now.setZone('Europe/Rome').toFormat('yyyy-MM-dd') }}. Le date dei prossimi giorni sono: {{ $('Salva in inbox').item.json.mappa_date }}. Quando l utente indica un giorno della settimana usa SEMPRE la data esatta dalla mappa qui sopra senza fare calcoli.\",\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"={{ $json.testo_originale }}\"\n    }\n  ]\n}",
-        "options": {}
-      },
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.3,
-      "position": [
-        416,
-        0
-      ],
-      "id": "457a8580-18a6-4a0a-b9a1-34e2b233bcb3",
-      "name": "Chiama Alfred (Claude API)",
-      "credentials": {
-        "httpHeaderAuth": {
-          "id": "k9nNFIY8N8wa6rZm",
-          "name": "Anthropic API Key"
-        }
-      }
-    },
-    {
-      "parameters": {
-        "jsCode": "const response = $input.first().json;\n\nconst rawText = response.content[0].text;\n\nconst alfred = JSON.parse(rawText);\n\nreturn [{\n  json: {\n    intent: alfred.intent,\n    testo_risposta: alfred.testo_risposta,\n    needs_confirmation: alfred.needs_confirmation,\n    motivo_conferma: alfred.motivo_conferma || '',\n    entita: alfred.entita || {}\n  }\n}];"
+        "jsCode": "const https = require('https');\nconst http = require('http');\n\nconst testo = $input.first().json.output;\nconst destinatario = '+393495931632';\n\nconst payload = JSON.stringify({\n  message: testo,\n  number: \"+393517872627\",\n  recipients: [destinatario]\n});\n\nawait new Promise((resolve, reject) => {\n  const options = {\n    hostname: 'segretario_signal_cli',\n    port: 8080,\n    path: '/v2/send',\n    method: 'POST',\n    headers: {\n      'Content-Type': 'application/json',\n      'Content-Length': Buffer.byteLength(payload)\n    }\n  };\n  const req = http.request(options, (res) => {\n    let data = '';\n    res.on('data', chunk => data += chunk);\n    res.on('end', () => {\n      if (res.statusCode === 200 || res.statusCode === 201) {\n        resolve(data);\n      } else {\n        reject(new Error(`Status ${res.statusCode}: ${data}`));\n      }\n    });\n  });\n  req.on('error', reject);\n  req.write(payload);\n  req.end();\n});\n\nreturn [{\n  json: {\n    messaggio_inviato: testo,\n    destinatario: destinatario,\n    stato: 'inviato'\n  }\n}];"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        624,
-        0
-      ],
-      "id": "b4b943e4-3bdb-41d9-9ea6-ae2ab72776d5",
-      "name": "Estrai JSON Alfred"
-    },
-    {
-      "parameters": {
-        "conditions": {
-          "options": {
-            "caseSensitive": true,
-            "leftValue": "",
-            "typeValidation": "strict",
-            "version": 3
-          },
-          "conditions": [
-            {
-              "id": "1c584891-1afd-46f6-8409-6da9e48543e3",
-              "leftValue": "=={{ $json.needs_confirmation }}",
-              "rightValue": "true",
-              "operator": {
-                "type": "string",
-                "operation": "equals",
-                "name": "filter.operator.equals"
-              }
-            }
-          ],
-          "combinator": "and"
-        },
-        "options": {}
-      },
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2.3,
-      "position": [
-        832,
-        0
-      ],
-      "id": "3c72b618-e6bb-418d-b4e7-287c7d959828",
-      "name": "Needs confirmation?"
-    },
-    {
-      "parameters": {
-        "jsCode": "const https = require('https');\nconst http = require('http');\n\nconst testo = $input.first().json.testo_risposta || $('Estrai JSON Alfred').item.json.testo_risposta;\nconst destinatario = $('Ricevi messaggio Signal').item.json.envelope.sourceNumber;\n\nconst payload = JSON.stringify({\n  message: testo,\n  number: \"+393517872627\",\n  recipients: [destinatario]\n});\n\nawait new Promise((resolve, reject) => {\n  const options = {\n    hostname: 'segretario_signal_cli',\n    port: 8080,\n    path: '/v2/send',\n    method: 'POST',\n    headers: {\n      'Content-Type': 'application/json',\n      'Content-Length': Buffer.byteLength(payload)\n    }\n  };\n\n  const req = http.request(options, (res) => {\n    let data = '';\n    res.on('data', chunk => data += chunk);\n    res.on('end', () => {\n      if (res.statusCode === 200 || res.statusCode === 201) {\n        resolve(data);\n      } else {\n        reject(new Error(`Status ${res.statusCode}: ${data}`));\n      }\n    });\n  });\n\n  req.on('error', reject);\n  req.write(payload);\n  req.end();\n});\n\nreturn [{\n  json: {\n    messaggio_inviato: testo,\n    destinatario: destinatario,\n    stato: 'inviato'\n  }\n}];"
-      },
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        2640,
-        480
+        800,
+        -48
       ],
       "id": "c542de17-cd3a-45a7-9dfd-94d65394b10e",
       "name": "Invia risposta Signal"
     },
     {
       "parameters": {
-        "jsCode": "const sqlite3 = require('sqlite3').verbose();\n\nconst inboxId = $('Salva in inbox').item.json.signal_message_id;\nconst testoRisposta = $('Estrai JSON Alfred').item.json.testo_risposta;\nconst intent = $('Estrai JSON Alfred').item.json.intent;\n\nawait new Promise((resolve, reject) => {\n  const db = new sqlite3.Database('/data/segretario.db');\n  \n  db.run(\n    `INSERT INTO messages_outbox \n     (inbox_message_id, testo_risposta, tipo, azione_eseguita) \n     VALUES (?, ?, 'testo', ?)`,\n    [inboxId, testoRisposta, intent],\n    function(err) {\n      db.close();\n      if (err) reject(err);\n      else resolve();\n    }\n  );\n});\n\nreturn [{\n  json: {\n    stato: 'completato',\n    intent: intent,\n    risposta_salvata: testoRisposta\n  }\n}];"
+        "jsCode": "const sqlite3 = require('sqlite3').verbose();\n\nconst inboxId = $('Salva in inbox').item.json.signal_message_id;\nconst testoRisposta = $('Invia risposta Signal').item.json.messaggio_inviato;\nconst intent = 'ai_agent';\n\n// Per blocca_slot salviamo il JSON completo con i dati dello slot\nlet contentDaSalvare = testoRisposta;\n\nawait new Promise((resolve, reject) => {\n  const db = new sqlite3.Database('/data/segretario.db');\n  db.run(\n    `INSERT INTO messages_outbox \n     (inbox_message_id, testo_risposta, tipo, azione_eseguita) \n     VALUES (?, ?, 'testo', ?)`,\n    [inboxId, testoRisposta, intent],\n    function(err) {\n      db.close();\n      if (err) reject(err);\n      else resolve();\n    }\n  );\n});\n\nawait new Promise((resolve, reject) => {\n  const db = new sqlite3.Database('/data/segretario.db');\n  db.run(\n    `INSERT INTO conversazione (role, content) VALUES ('assistant', ?)`,\n    [contentDaSalvare],\n    function(err) {\n      db.close();\n      if (err) reject(err);\n      else resolve();\n    }\n  );\n});\n\nawait new Promise((resolve, reject) => {\n  const db = new sqlite3.Database('/data/segretario.db');\n  db.run(\n    `DELETE FROM conversazione WHERE id NOT IN (\n      SELECT id FROM conversazione ORDER BY creato_il DESC LIMIT 20\n    )`,\n    [],\n    function(err) {\n      db.close();\n      if (err) reject(err);\n      else resolve();\n    }\n  );\n});\n\nreturn [{\n  json: {\n    stato: 'completato',\n    intent: intent,\n    risposta_salvata: testoRisposta\n  }\n}];"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2864,
-        336
+        1072,
+        -48
       ],
       "id": "0dc685aa-5aa1-43e5-98b8-75d485690149",
       "name": "Salva in outbox"
-    },
-    {
-      "parameters": {
-        "jsCode": "const entita = $('Estrai JSON Alfred').item.json.entita;\n\nconst data = entita.data;\nconst ora = entita.ora;\n\nconst startDT = DateTime.fromISO(data, { zone: 'Europe/Rome' }).set({\n  hour: parseInt(ora.split(':')[0]),\n  minute: parseInt(ora.split(':')[1]),\n  second: 0\n});\n\nconst durataMinuti = parseInt(entita.durata_minuti) || 60;\nconst endDT = startDT.plus({ minutes: durataMinuti });\n\nreturn [{\n  json: {\n    title: entita.descrizione,\n    start: startDT.toFormat(\"yyyy-MM-dd'T'HH:mm:ss\"),\n    end: endDT.toFormat(\"yyyy-MM-dd'T'HH:mm:ss\"),\n    calendario: entita.calendario\n  }\n}];"
-      },
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        1248,
-        0
-      ],
-      "id": "54929076-5a00-4bdf-9142-35e68437f026",
-      "name": "Prepara dati evento"
     },
     {
       "parameters": {
@@ -186,7 +87,7 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.3,
       "position": [
-        128,
+        -304,
         16
       ],
       "id": "7531bea6-84ba-4c2f-8403-35d0412186e6",
@@ -194,169 +95,697 @@
     },
     {
       "parameters": {
-        "conditions": {
-          "options": {
-            "caseSensitive": true,
-            "leftValue": "",
-            "typeValidation": "strict",
-            "version": 3
-          },
-          "conditions": [
-            {
-              "id": "76fefc84-76b0-4786-81fe-90d3b71b1802",
-              "leftValue": "={{ $json.intent }}",
-              "rightValue": "crea_appuntamento",
-              "operator": {
-                "type": "string",
-                "operation": "equals",
-                "name": "filter.operator.equals"
-              }
-            }
-          ],
-          "combinator": "and"
-        },
-        "options": {}
+        "promptType": "define",
+        "text": "=={{ $('Salva in inbox').item.json.testo_originale || $('Estrai trascrizione').item.json.testo_originale }}",
+        "options": {
+          "systemMessage": "=Sei Alfred, il segretario personale di Cesare Rizzo, dottore commercialista.\nLingua: italiano. Tono: professionale ma cordiale. Dai sempre del tu a Cesare.\nNon usare markdown nelle risposte (Signal non lo visualizza).\nNon usare elenchi puntati: scrivi in testo scorrevole.\n\nOggi è: {{ $now.setZone('Europe/Rome').toFormat('cccc d MMMM yyyy', { locale: 'it' }) }}\nOra attuale: {{ $now.setZone('Europe/Rome').toFormat('HH:mm') }}\n\n<CONTESTO_TEMPORALE>\nData_Oggi: {{ $now.setZone('Europe/Rome').toFormat('cccc yyyy-MM-dd') }}\n<MAPPATURA_PERIODI>\n{{ $('Salva in inbox').item.json.mappa_date }}\n</MAPPATURA_PERIODI>\nATTENZIONE: Se oggi è domenica, la \"prossima settimana\" inizia domani lunedì. Non usare mai le date di \"questa_settimana\" per richieste future.\n</CONTESTO_TEMPORALE>\n\nPROTOCOLLO OBBLIGATORIO PER LE DATE:\n1. Se l'utente menziona un giorno della settimana (es. \"venerdì\"), FERMATI.\n2. Cerca il nome del giorno nella TABELLA_DI_CONVERSIONE.\n3. Estrai la data YYYY-MM-DD corrispondente ESATTAMENTE a quel nome.\n4. Usa quella data e NON fare calcoli matematici.\n5. La data corretta è SEMPRE e SOLO quella nella tabella.\n\nSTRUMENTI DISPONIBILI:\nUsa sempre il tool appropriato quando l'intent è chiaro. Non chiedere conferma se hai tutti i dati necessari.\n- crea_appuntamento_outlook: appuntamenti lavorativi (clienti, riunioni, scadenze fiscali, pratiche, colleghi, studio)\n- crea_appuntamento_google: appuntamenti privati (medico, famiglia, amici, sport, viaggi, casa)\n- leggi_calendario: legge gli appuntamenti per un periodo da uno o entrambi i calendari\n- crea_task: crea un nuovo task\n- lista_task: elenca i task aperti (filtri: scadenza_settimana, urgenti, arretrati, tutti)\n- completa_task: segna un task come completato\n- annulla_task: annulla un task\n- posticipa_task: sposta la scadenza di un task\n- cerca_slot: trova uno slot libero su Outlook e lo prenota\n\nREGOLE CALENDARIO:\n- Contesto lavorativo → crea_appuntamento_outlook\n- Contesto privato → crea_appuntamento_google\n- Ambiguo → chiedi su quale calendario prima di procedere\n\nREGOLE GENERALI:\n- Se mancano data o ora per un appuntamento: chiedi, non chiamare il tool\n- Per appuntamenti: passa start e end in formato ISO completo (YYYY-MM-DDTHH:mm:ss), durata default 60 minuti\n- Dopo ogni azione: conferma in modo conciso senza ripetere tutti i dettagli\n- Per leggi_calendario: converti sempre le date in YYYY-MM-DD. \"oggi\" = data odierna dalla TABELLA, \"questa settimana\" = lunedì-domenica correnti, \"prossima settimana\" = lunedì-domenica della settimana successiva, calcolate a partire dalla data di oggi indicata sopra."
+        }
       },
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2.3,
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
       "position": [
-        1040,
-        96
+        336,
+        -48
       ],
-      "id": "c331d980-4b82-4b74-93f2-c6d1d500e1c3",
-      "name": "Smista intent (crea_appuntamento?)"
+      "id": "cfee4636-752c-432e-bd17-a84ad79c596c",
+      "name": "AI Agent"
     },
     {
       "parameters": {
-        "conditions": {
-          "options": {
-            "caseSensitive": true,
-            "leftValue": "",
-            "typeValidation": "strict",
-            "version": 3
-          },
-          "conditions": [
-            {
-              "id": "d0da18db-9314-42aa-9212-a9c88bd81aca",
-              "leftValue": "={{ $json.calendario }}",
-              "rightValue": "outlook",
-              "operator": {
-                "type": "string",
-                "operation": "equals",
-                "name": "filter.operator.equals"
-              }
-            }
-          ],
-          "combinator": "and"
+        "model": {
+          "__rl": true,
+          "mode": "list",
+          "value": "claude-sonnet-4-5-20250929",
+          "cachedResultName": "Claude Sonnet 4.5"
         },
-        "options": {}
+        "options": {
+          "maxTokensToSample": 1024,
+          "temperature": 0.3
+        }
       },
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2.3,
+      "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
+      "typeVersion": 1.3,
       "position": [
-        1440,
-        0
+        208,
+        160
       ],
-      "id": "7a069592-7432-455c-9cfc-8be0865a3807",
-      "name": "Smista calendario (outlook/google?)"
-    },
-    {
-      "parameters": {
-        "method": "POST",
-        "url": "https://www.googleapis.com/calendar/v3/calendars/cesare.rizzo.vi%40gmail.com/events",
-        "authentication": "predefinedCredentialType",
-        "nodeCredentialType": "googleCalendarOAuth2Api",
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={\n  \"summary\": \"{{ $json.title }}\",\n  \"start\": {\n    \"dateTime\": \"{{ $json.start }}\",\n    \"timeZone\": \"Europe/Rome\"\n  },\n  \"end\": {\n    \"dateTime\": \"{{ $json.end }}\",\n    \"timeZone\": \"Europe/Rome\"\n  }\n}",
-        "options": {}
-      },
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.3,
-      "position": [
-        1648,
-        176
-      ],
-      "id": "1a43f747-2a35-4739-b1c7-563d541914f4",
-      "name": "HTTP Request Google Calendar",
+      "id": "2ecde907-a401-4d6e-ba1c-0d72dd503ad5",
+      "name": "Anthropic Chat Model1",
       "credentials": {
-        "googleCalendarOAuth2Api": {
-          "id": "ug8CyLMU5NJ0P34d",
-          "name": "Google Calendar - Cesare"
+        "anthropicApi": {
+          "id": "ffa6EoWdy3UNig1c",
+          "name": "Anthropic account"
         }
       }
     },
     {
       "parameters": {
-        "method": "POST",
-        "url": "https://graph.microsoft.com/v1.0/me/calendars/AAMkADcyYWYwNzBhLTE0YzgtNDhkZi1hYTRkLWFiZjYzNDdhNTVjOABGAAAAAAB47B3Qtnq_TblwQ-ZXJpYKBwBObFWyR_VcR7TkZ2B47gUFAAAAAAEGAABObFWyR_VcR7TkZ2B47gUFAAAVKxMIAAA=/events",
-        "authentication": "predefinedCredentialType",
-        "nodeCredentialType": "microsoftOutlookOAuth2Api",
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={\n  \"subject\": \"{{ $json.title }}\",\n  \"start\": {\n    \"dateTime\": \"{{ $json.start }}\",\n    \"timeZone\": \"Europe/Rome\"\n  },\n  \"end\": {\n    \"dateTime\": \"{{ $json.end }}\",\n    \"timeZone\": \"Europe/Rome\"\n  }\n}",
-        "options": {}
+        "sessionIdType": "customKey",
+        "sessionKey": "=={{ $('Salva in inbox').item.json.mittente }}",
+        "contextWindowLength": 10
       },
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.3,
+      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+      "typeVersion": 1.3,
       "position": [
-        1632,
-        -160
+        352,
+        160
       ],
-      "id": "257a8c5a-21d9-4ea0-8fb0-15f765fc7b6e",
-      "name": "HTTP Request Outlook",
-      "credentials": {
-        "microsoftOutlookOAuth2Api": {
-          "id": "ca7yCMRSKLgEeAQK",
-          "name": "Microsoft Outlook account"
-        }
-      }
+      "id": "0a910f2e-9e65-42b8-8b6e-d039c6410648",
+      "name": "Simple Memory"
     },
     {
       "parameters": {
-        "conditions": {
-          "options": {
-            "caseSensitive": true,
-            "leftValue": "",
-            "typeValidation": "strict",
-            "version": 3
+        "description": "Lists open tasks. Input: filtro (scadenza_settimana | urgenti | arretrati | tutti, default: scadenza_settimana).",
+        "workflowId": {
+          "__rl": true,
+          "value": "GSKC8CCbIKOkC1Zj",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/GSKC8CCbIKOkC1Zj",
+          "cachedResultName": "Tool - Lista Task"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "filtro": "={{ JSON.parse($json.input).filtro }}"
           },
-          "conditions": [
+          "matchingColumns": [
+            "filtro"
+          ],
+          "schema": [
             {
-              "id": "06bca6dc-4788-4ae1-8cd0-b39e2cc9b86e",
-              "leftValue": "={{ $json.intent }}",
-              "rightValue": "lista_giornata",
-              "operator": {
-                "type": "string",
-                "operation": "equals",
-                "name": "filter.operator.equals"
-              }
+              "id": "filtro",
+              "displayName": "filtro",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
             }
           ],
-          "combinator": "and"
-        },
-        "options": {}
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        }
       },
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2.3,
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
       "position": [
-        1264,
+        560,
+        288
+      ],
+      "id": "b76dad48-6460-43ef-938d-daf6689c6a5b",
+      "name": "Tool - Lista Task"
+    },
+    {
+      "parameters": {
+        "description": "Marks a task as completed by searching it by description. Input: task_descrizione (keywords of the task to complete).",
+        "workflowId": {
+          "__rl": true,
+          "value": "2y2nVrenj4WMiESi",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/2y2nVrenj4WMiESi",
+          "cachedResultName": "Tool - Completa Task"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "task_descrizione": "={{ JSON.parse($json.input).task_descrizione }}"
+          },
+          "matchingColumns": [
+            "task_descrizione"
+          ],
+          "schema": [
+            {
+              "id": "task_descrizione",
+              "displayName": "task_descrizione",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "position": [
+        576,
         464
       ],
-      "id": "6f3afbb8-564e-4ea7-b19a-0c8222d8b7c7",
-      "name": "Smista intent (lista_giornata?)"
+      "id": "2f631ab0-488c-46c2-9ee7-2624cf2ad576",
+      "name": "Tool - Completa Task"
     },
     {
       "parameters": {
-        "url": "=https://graph.microsoft.com/v1.0/me/calendars/AAMkADcyYWYwNzBhLTE0YzgtNDhkZi1hYTRkLWFiZjYzNDdhNTVjOABGAAAAAAB47B3Qtnq_TblwQ-ZXJpYKBwBObFWyR_VcR7TkZ2B47gUFAAAAAAEGAABObFWyR_VcR7TkZ2B47gUFAAAVKxMIAAA=/calendarView?startDateTime={{ $json.timeMin }}&endDateTime={{ $json.timeMax }}&$orderby=start/dateTime&$top=50",
-        "authentication": "predefinedCredentialType",
-        "nodeCredentialType": "microsoftOutlookOAuth2Api",
-        "sendHeaders": true,
-        "headerParameters": {
+        "description": "Data di scadenza in formato YYYY-MM-DD. ATTENZIONE: se l'utente indica un giorno della settimana, estrai la data ESATTAMENTE dalla TABELLA_DATE nel system message. Per venerdì usa la data della riga venerdì, non calcolare. Non inventare mai la data.",
+        "workflowId": {
+          "__rl": true,
+          "value": "HXm-aDV8Qsmbeu_eQJhka",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/HXm-aDV8Qsmbeu_eQJhka",
+          "cachedResultName": "Tool - Crea Task"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "descrizione": "={{ JSON.parse($json.input).descrizione }}",
+            "scadenza": "={{ JSON.parse($json.input).scadenza }}",
+            "priorita": "={{ JSON.parse($json.input).priorita }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "descrizione",
+              "displayName": "descrizione",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "scadenza",
+              "displayName": "scadenza",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "priorita",
+              "displayName": "priorita",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "position": [
+        448,
+        352
+      ],
+      "id": "6c830b15-69cb-40b5-8fed-08c3c31ce6a7",
+      "name": "Tool - Crea Task"
+    },
+    {
+      "parameters": {
+        "description": "Cancels an open task by searching it by description. Input: task_descrizione (keywords of the task to cancel).",
+        "workflowId": {
+          "__rl": true,
+          "value": "RziLiKne7kA6K9uq",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/RziLiKne7kA6K9uq",
+          "cachedResultName": "Tool - Annulla Task"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "task_descrizione": "={{ JSON.parse($json.input).task_descrizione }}"
+          },
+          "matchingColumns": [
+            "task_descrizione"
+          ],
+          "schema": [
+            {
+              "id": "task_descrizione",
+              "displayName": "task_descrizione",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "position": [
+        432,
+        544
+      ],
+      "id": "d84d08d6-64d8-44ed-90b0-aaf29783cc29",
+      "name": "Tool - Annulla Task"
+    },
+    {
+      "parameters": {
+        "description": "Moves the deadline of an open task. Input: task_descrizione (keywords of the task), nuova_scadenza (new deadline in YYYY-MM-DD format. Use the TABELLA_DATE in the system message to convert day names to dates).",
+        "workflowId": {
+          "__rl": true,
+          "value": "KDbuWGlalwvUJJhB",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/KDbuWGlalwvUJJhB",
+          "cachedResultName": "Tool - Posticipa Task"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "task_descrizione": "={{ JSON.parse($json.input).task_descrizione }}",
+            "nuova_scadenza": "={{ JSON.parse($json.input).nuova_scadenza }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "task_descrizione",
+              "displayName": "task_descrizione",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "nuova_scadenza",
+              "displayName": "nuova_scadenza",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "position": [
+        576,
+        656
+      ],
+      "id": "ed713883-2931-4c62-a2be-378ccb2dd619",
+      "name": "Tool - Posticipa Task"
+    },
+    {
+      "parameters": {
+        "description": "Creates an event on Outlook Calendar for work-related appointments. Input: title (string), start (ISO format YYYY-MM-DDTHH:mm:ss), end (ISO format YYYY-MM-DDTHH:mm:ss).",
+        "workflowId": {
+          "__rl": true,
+          "value": "XivG6AKgZgyba8hp",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/XivG6AKgZgyba8hp",
+          "cachedResultName": "Tool - Crea Appuntamento Outlook"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "title": "={{ JSON.parse($json.input).title }}",
+            "start": "={{ JSON.parse($json.input).start }}",
+            "end": "={{ JSON.parse($json.input).end }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "title",
+              "displayName": "title",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            },
+            {
+              "id": "start",
+              "displayName": "start",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            },
+            {
+              "id": "end",
+              "displayName": "end",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "position": [
+        448,
+        752
+      ],
+      "id": "74a977d6-8127-4bf7-80ce-c2165de22aaa",
+      "name": "Tool - Crea Appuntamento Outlook"
+    },
+    {
+      "parameters": {
+        "description": "Creates an event on Google Calendar for personal appointments. Input: title (string), start (ISO format YYYY-MM-DDTHH:mm:ss), end (ISO format YYYY-MM-DDTHH:mm:ss).",
+        "workflowId": {
+          "__rl": true,
+          "value": "StRjw3kPYOi59EEi",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/StRjw3kPYOi59EEi",
+          "cachedResultName": "Tool - Crea Appuntamento Google"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "title": "={{ JSON.parse($json.input).title }}",
+            "start": "={{ JSON.parse($json.input).start }}",
+            "end": "={{ JSON.parse($json.input).end }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "title",
+              "displayName": "title",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            },
+            {
+              "id": "start",
+              "displayName": "start",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            },
+            {
+              "id": "end",
+              "displayName": "end",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "position": [
+        576,
+        848
+      ],
+      "id": "ddbf10fb-468a-4a0d-a15a-e1b271c519fa",
+      "name": "Tool - Crea Appuntamento Google"
+    },
+    {
+      "parameters": {
+        "description": "Reads calendar events. \nParameters:\n- tipo: \"relativo\" if user mentions periods like today/tomorrow/this week/next week. \"assoluto\" if user mentions a specific date.\n- valore: if tipo is \"relativo\", use one of: oggi | domani | questa_settimana | prossima_settimana. If tipo is \"assoluto\", pass the date in YYYY-MM-DD format.\n- filtro_calendario: outlook | google | entrambi",
+        "workflowId": {
+          "__rl": true,
+          "value": "WG74gUEyFFVAFHS5",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/WG74gUEyFFVAFHS5",
+          "cachedResultName": "Tool - Leggi Calendario"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "tipo": "={{ JSON.parse($json.input).tipo }}",
+            "valore": "={{ JSON.parse($json.input).valore }}",
+            "filtro_calendario": "={{ JSON.parse($json.input).filtro_calendario }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "tipo",
+              "displayName": "tipo",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "valore",
+              "displayName": "valore",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "filtro_calendario",
+              "displayName": "filtro_calendario",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "position": [
+        448,
+        976
+      ],
+      "id": "0e1dcfdf-992e-4848-b1e0-d1a1ff904f47",
+      "name": "Tool - Leggi Calendario"
+    },
+    {
+      "parameters": {
+        "description": "Finds free time slots on Outlook calendar. Input: descrizione (string), durata_minuti (integer as string, default 60), data_preferita (YYYY-MM-DD, optional), ora_preferita (HH:MM, optional).",
+        "workflowId": {
+          "__rl": true,
+          "value": "dntvKovbwJTtodhh",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/dntvKovbwJTtodhh",
+          "cachedResultName": "Tool - Cerca Slot"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "descrizione": "={{ JSON.parse($json.input).descrizione }}",
+            "durata_minuti": "={{ JSON.parse($json.input).durata_minuti }}",
+            "data_preferita": "={{ JSON.parse($json.input).data_preferita }}",
+            "ora_preferita": "={{ JSON.parse($json.input).ora_preferita }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "descrizione",
+              "displayName": "descrizione",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            },
+            {
+              "id": "durata_minuti",
+              "displayName": "durata_minuti",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            },
+            {
+              "id": "data_preferita",
+              "displayName": "data_preferita",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            },
+            {
+              "id": "ora_preferita",
+              "displayName": "ora_preferita",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "position": [
+        576,
+        1104
+      ],
+      "id": "e38a8162-99f7-440f-bec9-83af1a082a38",
+      "name": "Tool - Cerca Slot"
+    },
+    {
+      "parameters": {
+        "description": "Books a confirmed time slot on Outlook Calendar. Call this after the user confirms which slot they want. Input: start_iso (YYYY-MM-DDTHH:mm:ss), end_iso (YYYY-MM-DDTHH:mm:ss), descrizione (string).",
+        "workflowId": {
+          "__rl": true,
+          "value": "roq8XXnrz9aelKBo",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/roq8XXnrz9aelKBo",
+          "cachedResultName": "Tool - Conferma Slot"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "start_iso": "={{ JSON.parse($json.input).start_iso }}",
+            "end_iso": "={{ JSON.parse($json.input).end_iso }}",
+            "descrizione": "={{ JSON.parse($json.input).descrizione }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "start_iso",
+              "displayName": "start_iso",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            },
+            {
+              "id": "end_iso",
+              "displayName": "end_iso",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            },
+            {
+              "id": "descrizione",
+              "displayName": "descrizione",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "position": [
+        496,
+        160
+      ],
+      "id": "235cb9a1-479f-4eb1-ac87-aa90725e088f",
+      "name": "Tool - Conferma Slot"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "5b9787a7-1c23-4562-8d9f-5ff65017edff",
+              "leftValue": "={{ $('Salva in inbox').item.json.tipo }}",
+              "rightValue": "vocale",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -752,
+        320
+      ],
+      "id": "b8fa0ca0-65f4-4654-ab82-8d08aaa064a5",
+      "name": "È vocale?"
+    },
+    {
+      "parameters": {
+        "url": "=http://segretario_signal_cli:8080/v1/attachments/{{ $('Salva in inbox').item.json.attachments[0].id }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        -496,
+        272
+      ],
+      "id": "f3faf845-9de5-4091-af41-7566a4a0ae7d",
+      "name": "Scarica audio"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/audio/transcriptions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
           "parameters": [
             {
-              "name": "Prefer",
-              "value": "outlook.timezone=\"Europe/Rome\""
+              "name": "model",
+              "value": "whisper-1"
+            },
+            {
+              "name": "language",
+              "value": "it"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "file",
+              "inputDataFieldName": "data"
             }
           ]
         },
@@ -365,180 +794,61 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.3,
       "position": [
-        1696,
-        368
+        -160,
+        272
       ],
-      "id": "3c427ba0-e1b0-4f45-80b9-e5d5a0fbe661",
-      "name": "Leggi eventi Outlook",
-      "alwaysOutputData": true,
+      "id": "3397520d-045e-4033-832a-d0ce240770a6",
+      "name": "Whisper STT",
       "credentials": {
-        "microsoftOutlookOAuth2Api": {
-          "id": "ca7yCMRSKLgEeAQK",
-          "name": "Microsoft Outlook account"
+        "httpHeaderAuth": {
+          "id": "xmb9zEAlWIpMepY2",
+          "name": "OpenAI API Key"
         }
       }
     },
     {
       "parameters": {
-        "jsCode": "// Recupera eventi Outlook salvati nel nodo intermedio\nconst eventiOutlook = $('Salva risultati Outlook').item.json.eventi_outlook || [];\n\n// Recupera date del periodo da Alfred\nconst dataInizio = $('Estrai JSON Alfred').item.json.entita.data_inizio;\nconst dataFine = $('Estrai JSON Alfred').item.json.entita.data_fine;\n\n// Recupera eventi Google dall'input corrente e filtra per periodo\nconst eventiGoogle = [];\nconst items = $input.all();\n\nfor (const item of items) {\n  const data = item.json;\n  if (data.id && data.summary !== undefined) {\n    const dataEvento = data.start?.dateTime?.slice(0,10) || data.start?.date?.slice(0,10) || '';\n    // Filtra solo eventi nel periodo richiesto\n    if (dataEvento >= dataInizio && dataEvento <= dataFine) {\n      eventiGoogle.push({\n        titolo: data.summary || 'Senza titolo',\n        inizio: data.start?.dateTime || data.start?.date || '',\n        fine: data.end?.dateTime || data.end?.date || '',\n        calendario: 'Google'\n      });\n    }\n  }\n}\n\nconst filtro = $('Estrai JSON Alfred').item.json.entita.filtro_calendario || 'entrambi';\n\nlet eventi = [];\nif (filtro === 'outlook') {\n  eventi = eventiOutlook;\n} else if (filtro === 'google') {\n  eventi = eventiGoogle;\n} else {\n  eventi = [...eventiOutlook, ...eventiGoogle];\n}\n\neventi.sort((a, b) => new Date(a.inizio) - new Date(b.inizio));\n\nconst listaFormattata = eventi.map(ev => {\n  const inizio = ev.inizio ? DateTime.fromISO(ev.inizio).setZone('Europe/Rome').toFormat('dd/MM HH:mm') : '';\n  const fine = ev.fine ? DateTime.fromISO(ev.fine).setZone('Europe/Rome').toFormat('HH:mm') : '';\n  return `• ${inizio}-${fine} [${ev.calendario}] ${ev.titolo}`;\n}).join('\\n');\n\nconst testo = eventi.length > 0\n  ? `Ecco i tuoi appuntamenti:\\n${listaFormattata}`\n  : 'Non ho trovato appuntamenti nel periodo richiesto.';\n\nreturn [{\n  json: {\n    testo_risposta: testo\n  }\n}];"
+        "jsCode": "const trascrizione = $input.first().json.text || '';\n\nif (!trascrizione) {\n  return [{ json: { \n    testo_originale: '',\n    errore: 'Trascrizione vuota'\n  } }];\n}\n\nreturn [{ json: { \n  testo_originale: trascrizione,\n  signal_message_id: $('Salva in inbox').item.json.signal_message_id,\n  mittente: $('Salva in inbox').item.json.mittente,\n  mappa_date: $('Salva in inbox').item.json.mappa_date,\n  storico_conversazione: $('Salva in inbox').item.json.storico_conversazione,\n  is_nuovo: true,\n  tipo: 'vocale'\n} }];"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2224,
-        368
+        16,
+        240
       ],
-      "id": "7b55f46f-5fcb-47e2-bf2d-03d6d6ddb86a",
-      "name": "Unisci e prepara lista appuntamenti"
+      "id": "5bfd6ad2-06f6-459f-a9bf-f08e69f7bdaa",
+      "name": "Estrai trascrizione"
     },
     {
       "parameters": {
-        "jsCode": "const entita = $('Estrai JSON Alfred').item.json.entita;\n\nreturn [{\n  json: {\n    data_inizio: entita.data_inizio,\n    data_fine: entita.data_fine,\n    filtro_calendario: entita.filtro_calendario || 'entrambi',\n    timeMin: entita.data_inizio + 'T00:00:00Z',\n    timeMax: entita.data_fine + 'T23:59:59Z'\n  }\n}];"
-      },
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        1504,
-        368
-      ],
-      "id": "ad96d0b2-fba9-4fe3-a07a-d77b3c93ced5",
-      "name": "Prepara query calendario"
-    },
-    {
-      "parameters": {
-        "jsCode": "const outlookData = $input.first().json;\nconst eventi = [];\n\nif (outlookData.value && Array.isArray(outlookData.value)) {\n  for (const ev of outlookData.value) {\n    eventi.push({\n      titolo: ev.subject || 'Senza titolo',\n      inizio: ev.start?.dateTime || '',\n      fine: ev.end?.dateTime || '',\n      calendario: 'Outlook'\n    });\n  }\n}\n\nreturn [{\n  json: {\n    eventi_outlook: eventi\n  }\n}];"
-      },
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        1872,
-        368
-      ],
-      "id": "d2093958-7ae2-4bc8-8626-c0bc3faa451d",
-      "name": "Salva risultati Outlook"
-    },
-    {
-      "parameters": {
-        "conditions": {
-          "options": {
-            "caseSensitive": true,
-            "leftValue": "",
-            "typeValidation": "strict",
-            "version": 3
-          },
-          "conditions": [
-            {
-              "id": "455cb67c-9aa8-4c0f-959d-60e665e3bef2",
-              "leftValue": "={{ $json.intent }}",
-              "rightValue": "crea_task",
-              "operator": {
-                "type": "string",
-                "operation": "equals",
-                "name": "filter.operator.equals"
-              }
-            }
-          ],
-          "combinator": "and"
-        },
-        "options": {}
-      },
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2.3,
-      "position": [
-        1504,
-        656
-      ],
-      "id": "57966c44-777a-4f46-8597-13bd906dc187",
-      "name": "Smista intent (crea_task?)"
-    },
-    {
-      "parameters": {
-        "jsCode": "const sqlite3 = require('sqlite3').verbose();\n\nconst entita = $('Estrai JSON Alfred').item.json.entita;\nconst sourceMessageId = $('Salva in inbox').item.json.signal_message_id;\n\nconst descrizione = entita.descrizione || '';\nconst scadenza = entita.scadenza || null;\nconst priorita = entita.priorita || 'media';\n\n// Calcola next_followup_at: se c'è scadenza usa quella, altrimenti domani\nconst oggi = new Date(new Date().toLocaleString('en-US', { timeZone: 'Europe/Rome' }));\nlet nextFollowup;\nif (scadenza) {\n  nextFollowup = scadenza + 'T09:00:00';\n} else {\n  const domani = new Date(oggi);\n  domani.setDate(oggi.getDate() + 1);\n  const anno = domani.getFullYear();\n  const mese = String(domani.getMonth() + 1).padStart(2, '0');\n  const giorno = String(domani.getDate()).padStart(2, '0');\n  nextFollowup = `${anno}-${mese}-${giorno}T09:00:00`;\n}\n\nawait new Promise((resolve, reject) => {\n  const db = new sqlite3.Database('/data/segretario.db');\n  db.run(\n    `INSERT INTO task \n     (descrizione, scadenza, priorita, stato, reminder_count, next_followup_at, source_message_id, creato_il, updated_at)\n     VALUES (?, ?, ?, 'aperto', 0, ?, ?, datetime('now'), datetime('now'))`,\n    [descrizione, scadenza, priorita, nextFollowup, sourceMessageId],\n    function(err) {\n      db.close();\n      if (err) reject(err);\n      else resolve(this.lastID);\n    }\n  );\n});\n\nreturn [{\n  json: {\n    testo_risposta: $('Estrai JSON Alfred').item.json.testo_risposta\n  }\n}];"
-      },
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        1728,
-        544
-      ],
-      "id": "7f41dcac-df52-4d6f-9342-d9be369adb3b",
-      "name": "Crea task su SQLite"
-    },
-    {
-      "parameters": {
-        "operation": "getAll",
-        "calendar": {
-          "__rl": true,
-          "value": "cesare.rizzo.vi@gmail.com",
-          "mode": "list",
-          "cachedResultName": "cesare.rizzo.vi@gmail.com"
-        },
-        "timeMin": "={{ $('Prepara query calendario').item.json.timeMin }}",
-        "timeMax": "={{ $('Prepara query calendario').item.json.timeMax }}",
-        "options": {}
-      },
-      "type": "n8n-nodes-base.googleCalendar",
-      "typeVersion": 1.3,
-      "position": [
-        2048,
-        368
-      ],
-      "id": "24214008-bacd-43f2-8e91-9a7235a3a5fa",
-      "name": "Leggi eventi Google Calendar",
-      "alwaysOutputData": true,
-      "credentials": {
-        "googleCalendarOAuth2Api": {
-          "id": "ug8CyLMU5NJ0P34d",
-          "name": "Google Calendar - Cesare"
+        "fileSelector": "/home/node/.n8n-files/voice_output.mp3",
+        "options": {
+          "fileExtension": "mp3",
+          "mimeType": "audio/mpeg",
+          "dataPropertyName": "data"
         }
-      }
-    },
-    {
-      "parameters": {
-        "conditions": {
-          "options": {
-            "caseSensitive": true,
-            "leftValue": "",
-            "typeValidation": "strict",
-            "version": 3
-          },
-          "conditions": [
-            {
-              "id": "ac107a7a-99c9-4da7-9123-7be8c74cb205",
-              "leftValue": "={{ $json.intent }}",
-              "rightValue": "lista_task",
-              "operator": {
-                "type": "string",
-                "operation": "equals",
-                "name": "filter.operator.equals"
-              }
-            }
-          ],
-          "combinator": "and"
-        },
-        "options": {}
       },
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2.3,
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1.1,
       "position": [
-        1712,
-        816
+        -320,
+        576
       ],
-      "id": "38269c8b-3866-4df0-9c76-40a9ca61a290",
-      "name": "Smista intent (lista_task?)"
+      "id": "ad1536a5-15f5-4ee9-a618-dba01a4df4f2",
+      "name": "Leggi audio MP3"
     },
     {
       "parameters": {
-        "jsCode": "const sqlite3 = require('sqlite3').verbose();\n\nconst filtro = $('Estrai JSON Alfred').item.json.entita.filtro_task || 'scadenza_settimana';\n\nconst oggi = new Date(new Date().toLocaleString('en-US', { timeZone: 'Europe/Rome' }));\nconst oggiStr = `${oggi.getFullYear()}-${String(oggi.getMonth()+1).padStart(2,'0')}-${String(oggi.getDate()).padStart(2,'0')}`;\nconst fraSettimana = new Date(oggi.getTime() + 7 * 24 * 60 * 60 * 1000);\nconst fraSettimanaStr = `${fraSettimana.getFullYear()}-${String(fraSettimana.getMonth()+1).padStart(2,'0')}-${String(fraSettimana.getDate()).padStart(2,'0')}`;\n\nlet query = '';\nlet params = [];\n\nif (filtro === 'scadenza_settimana') {\n  query = `SELECT * FROM task WHERE stato = 'aperto' AND scadenza IS NOT NULL AND date(scadenza) <= ? ORDER BY scadenza ASC, priorita DESC`;\n  params = [fraSettimanaStr];\n} else if (filtro === 'urgenti') {\n  query = `SELECT * FROM task WHERE stato = 'aperto' AND priorita = 'alta' ORDER BY scadenza ASC`;\n  params = [];\n} else if (filtro === 'arretrati') {\n  query = `SELECT * FROM task WHERE stato = 'aperto' AND scadenza IS NOT NULL AND date(scadenza) < ? ORDER BY scadenza ASC`;\n  params = [oggiStr];\n} else {\n  query = `SELECT * FROM task WHERE stato = 'aperto' ORDER BY scadenza ASC, priorita DESC`;\n  params = [];\n}\n\nconst tasks = await new Promise((resolve, reject) => {\n  const db = new sqlite3.Database('/data/segretario.db');\n  db.all(query, params, function(err, rows) {\n    db.close();\n    if (err) reject(err);\n    else resolve(rows);\n  });\n});\n\nconst prioritaEmoji = { alta: '🔴', media: '🟡', bassa: '🟢' };\n\nconst listaFormattata = tasks.map(t => {\n  const scad = t.scadenza ? ` — scadenza ${t.scadenza.slice(0,10)}` : '';\n  const emoji = prioritaEmoji[t.priorita] || '⚪';\n  const arretrato = t.scadenza && t.scadenza.slice(0,10) < oggiStr ? ' ⚠️' : '';\n  return `${emoji} ${t.descrizione}${scad}${arretrato}`;\n}).join('\\n');\n\nconst intestazione = {\n  scadenza_settimana: 'task in scadenza questa settimana',\n  urgenti: 'task urgenti (alta priorità)',\n  arretrati: 'task arretrati',\n  tutti: 'task aperti'\n};\n\nconst testo = tasks.length > 0\n  ? `Ecco i tuoi ${intestazione[filtro]}:\\n\\n${listaFormattata}`\n  : `Non ho trovato ${intestazione[filtro]}.`;\n\nreturn [{\n  json: {\n    testo_risposta: testo\n  }\n}];"
+        "jsCode": "const { spawnSync } = require('child_process');\nconst fs = require('fs');\n\nconst binaryItem = $input.first().binary.data;\nconst id = binaryItem.id || '';\nconst realPath = '/home/node/.n8n/binaryData/' + id.replace('filesystem-v2:', '');\n\nif (!fs.existsSync(realPath)) {\n  throw new Error(`File non trovato: ${realPath}`);\n}\n\nconst result = spawnSync('/data/ffmpeg', [\n  '-i', realPath,\n  '-codec:a', 'libmp3lame',\n  '-qscale:a', '2',\n  '/home/node/.n8n-files/voice_output.mp3',\n  '-y'\n]);\n\nconst stderr = result.stderr ? result.stderr.toString().slice(-300) : '';\n\nif (result.status !== 0) {\n  return [{ json: { status: result.status, stderr, realPath } }];\n}\n\nreturn $input.all();"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1920,
-        720
+        -464,
+        576
       ],
-      "id": "69b03873-f036-4ee0-928d-54462b6b6c97",
-      "name": "Code in JavaScript"
+      "id": "b9f7ef0c-5e44-4c06-a105-775553c6ce28",
+      "name": "Converti audio"
     }
   ],
   "pinData": {},
@@ -565,40 +875,6 @@
         ]
       ]
     },
-    "Chiama Alfred (Claude API)": {
-      "main": [
-        [
-          {
-            "node": "Estrai JSON Alfred",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Estrai JSON Alfred": {
-      "main": [
-        [
-          {
-            "node": "Needs confirmation?",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Needs confirmation?": {
-      "main": [
-        [],
-        [
-          {
-            "node": "Smista intent (crea_appuntamento?)",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
     "Invia risposta Signal": {
       "main": [
         [
@@ -610,211 +886,234 @@
         ]
       ]
     },
-    "Prepara dati evento": {
-      "main": [
-        [
-          {
-            "node": "Smista calendario (outlook/google?)",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
     "Deduplicazione messaggio": {
       "main": [
         [
           {
-            "node": "Chiama Alfred (Claude API)",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Smista intent (crea_appuntamento?)": {
-      "main": [
-        [
-          {
-            "node": "Prepara dati evento",
+            "node": "È vocale?",
             "type": "main",
             "index": 0
           }
         ],
         [
           {
-            "node": "Smista intent (lista_giornata?)",
+            "node": "AI Agent",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Smista calendario (outlook/google?)": {
+    "Anthropic Chat Model1": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Simple Memory": {
+      "ai_memory": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent": {
       "main": [
         [
           {
-            "node": "HTTP Request Outlook",
+            "node": "Invia risposta Signal",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tool - Lista Task": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tool - Completa Task": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tool - Crea Task": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tool - Annulla Task": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tool - Posticipa Task": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tool - Crea Appuntamento Outlook": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tool - Crea Appuntamento Google": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tool - Leggi Calendario": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tool - Cerca Slot": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tool - Conferma Slot": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "È vocale?": {
+      "main": [
+        [
+          {
+            "node": "Scarica audio",
             "type": "main",
             "index": 0
           }
         ],
         [
           {
-            "node": "HTTP Request Google Calendar",
+            "node": "AI Agent",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "HTTP Request Google Calendar": {
+    "Scarica audio": {
       "main": [
         [
           {
-            "node": "Invia risposta Signal",
+            "node": "Converti audio",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "HTTP Request Outlook": {
+    "Whisper STT": {
       "main": [
         [
           {
-            "node": "Invia risposta Signal",
+            "node": "Estrai trascrizione",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Smista intent (lista_giornata?)": {
+    "Estrai trascrizione": {
       "main": [
         [
           {
-            "node": "Prepara query calendario",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Smista intent (crea_task?)",
+            "node": "AI Agent",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Leggi eventi Outlook": {
+    "Converti audio": {
       "main": [
         [
           {
-            "node": "Salva risultati Outlook",
+            "node": "Leggi audio MP3",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Unisci e prepara lista appuntamenti": {
+    "Leggi audio MP3": {
       "main": [
         [
           {
-            "node": "Invia risposta Signal",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Prepara query calendario": {
-      "main": [
-        [
-          {
-            "node": "Leggi eventi Outlook",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Salva risultati Outlook": {
-      "main": [
-        [
-          {
-            "node": "Leggi eventi Google Calendar",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Smista intent (crea_task?)": {
-      "main": [
-        [
-          {
-            "node": "Crea task su SQLite",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Smista intent (lista_task?)",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Crea task su SQLite": {
-      "main": [
-        [
-          {
-            "node": "Invia risposta Signal",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Leggi eventi Google Calendar": {
-      "main": [
-        [
-          {
-            "node": "Unisci e prepara lista appuntamenti",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Smista intent (lista_task?)": {
-      "main": [
-        [
-          {
-            "node": "Code in JavaScript",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Invia risposta Signal",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Code in JavaScript": {
-      "main": [
-        [
-          {
-            "node": "Invia risposta Signal",
+            "node": "Whisper STT",
             "type": "main",
             "index": 0
           }
@@ -827,7 +1126,7 @@
     "executionOrder": "v1",
     "availableInMCP": false
   },
-  "versionId": "5cd60fca-a733-4d21-a499-f42809426c1b",
+  "versionId": "df4ccf24-5ba1-4acf-8eb0-59bb4d5d537a",
   "meta": {
     "templateCredsSetupCompleted": true,
     "instanceId": "97e831daa831b2478c6e15942ecdaea506ad6ba802e16c1e1aa89d4dd0e2bb29"

@@ -1,0 +1,200 @@
+{
+  "name": "Segretario AI — Scheduler Solleciti",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 3
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        0,
+        0
+      ],
+      "id": "8978575c-e6ed-4d5d-83b7-4c13f05213a9",
+      "name": "Schedule Trigger"
+    },
+    {
+      "parameters": {
+        "jsCode": "const sqlite3 = require('sqlite3').verbose();\n\n// Leggi le impostazioni di quiete dal database\nconst settings = await new Promise((resolve, reject) => {\n  const db = new sqlite3.Database('/data/segretario.db');\n  db.all(\n    `SELECT chiave, valore FROM system_settings \n     WHERE chiave IN ('orario_quiete_inizio', 'orario_quiete_fine', 'giorni_esclusi')`,\n    [],\n    function(err, rows) {\n      db.close();\n      if (err) reject(err);\n      else resolve(rows);\n    }\n  );\n});\n\nconst cfg = {};\nfor (const row of settings) {\n  cfg[row.chiave] = row.valore;\n}\n\nconst ora_quiete_inizio = cfg.orario_quiete_inizio || '21:00';\nconst ora_quiete_fine = cfg.orario_quiete_fine || '07:30';\nconst giorni_esclusi = (cfg.giorni_esclusi || 'domenica').split(',').map(g => g.trim());\n\nconst now = new Date(new Date().toLocaleString('en-US', { timeZone: 'Europe/Rome' }));\nconst giornoSettimana = ['domenica','lunedi','martedi','mercoledi','giovedi','venerdi','sabato'][now.getDay()];\nconst oraCorrente = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;\n\n// Controlla se siamo in orario di quiete\nconst isGiornoEscluso = giorni_esclusi.includes(giornoSettimana);\nconst isOrarioQuiete = oraCorrente >= ora_quiete_inizio || oraCorrente < ora_quiete_fine;\n\nconst puoiInviare = !isGiornoEscluso && !isOrarioQuiete;\n\nreturn [{\n  json: {\n    puo_inviare: puoiInviare,\n    ora_corrente: oraCorrente,\n    giorno: giornoSettimana\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        208,
+        0
+      ],
+      "id": "e4b5f73e-cb1f-4b0a-9a0a-6bf0c9dacdaa",
+      "name": "Controlla orario quiete"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "8d70eb14-7b23-4a84-875e-06b19cde9162",
+              "leftValue": "={{ $json.puo_inviare }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        416,
+        0
+      ],
+      "id": "0b60da13-89dc-4f4c-89f0-6db025529a86",
+      "name": "È orario consentito?"
+    },
+    {
+      "parameters": {
+        "jsCode": "const sqlite3 = require('sqlite3').verbose();\n\nconst now = new Date(new Date().toLocaleString('en-US', { timeZone: 'Europe/Rome' }));\nconst nowISO = now.toISOString().slice(0, 19).replace('T', ' ');\n\nconst tasks = await new Promise((resolve, reject) => {\n  const db = new sqlite3.Database('/data/segretario.db');\n  db.all(\n    `SELECT * FROM task \n     WHERE stato = 'aperto'\n     AND (scadenza IS NOT NULL AND scadenza <= ?)\n     AND (snooze_until IS NULL OR snooze_until <= ?)\n     AND (next_followup_at IS NULL OR next_followup_at <= ?)\n     ORDER BY scadenza ASC\n     LIMIT 10`,\n    [nowISO, nowISO, nowISO],\n    function(err, rows) {\n      db.close();\n      if (err) reject(err);\n      else resolve(rows);\n    }\n  );\n});\n\nreturn [{\n  json: {\n    tasks: tasks,\n    count: tasks.length\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        624,
+        -96
+      ],
+      "id": "54e7c947-71eb-47af-951e-cf460a0652f3",
+      "name": "Leggi task scaduti"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "064363e7-7e23-4dc5-ac64-6733d8f9aea5",
+              "leftValue": "={{ $json.count }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        832,
+        -96
+      ],
+      "id": "6e46a210-8096-4912-a55d-56c914441281",
+      "name": "Ci sono task scaduti?"
+    },
+    {
+      "parameters": {
+        "jsCode": "const http = require('http');\nconst sqlite3 = require('sqlite3').verbose();\n\nconst tasks = $input.first().json.tasks;\nconst destinatario = '+393495931632'; // sostituisci con il tuo numero\n\nconst toniSollecito = [\n  (t) => `Ciao Cesare, ti ricordo che hai un task in scadenza: \"${t.descrizione}\". Riesci a occupartene oggi?`,\n  (t) => `Cesare, il task \"${t.descrizione}\" è ancora aperto e scaduto. Vuoi occupartene adesso o preferisci posticiparlo?`,\n  (t) => `Attenzione Cesare: il task \"${t.descrizione}\" è in arretrato da un po'. Ti conviene pianificare uno slot per completarlo.`,\n  (t) => `⚠️ Cesare, il task \"${t.descrizione}\" è rimasto aperto troppo a lungo. Richede la tua attenzione urgente.`\n];\n\nconst now = new Date(new Date().toLocaleString('en-US', { timeZone: 'Europe/Rome' }));\nconst nowISO = now.toISOString().slice(0, 19).replace('T', ' ');\n\n// Calcola prossimo followup (3 ore da adesso)\nconst nextFollowup = new Date(now.getTime() + 3 * 60 * 60 * 1000);\nconst nextFollowupISO = nextFollowup.toISOString().slice(0, 19).replace('T', ' ');\n\nfor (const task of tasks) {\n  const idx = Math.min(task.reminder_count, toniSollecito.length - 1);\n  const testo = toniSollecito[idx](task);\n\n  // Invia messaggio Signal\n  await new Promise((resolve, reject) => {\n    const payload = JSON.stringify({\n      message: testo,\n      number: '+393517872627',\n      recipients: [destinatario]\n    });\n    const options = {\n      hostname: 'segretario_signal_cli',\n      port: 8080,\n      path: '/v2/send',\n      method: 'POST',\n      headers: {\n        'Content-Type': 'application/json',\n        'Content-Length': Buffer.byteLength(payload)\n      }\n    };\n    const req = http.request(options, (res) => {\n      let data = '';\n      res.on('data', chunk => data += chunk);\n      res.on('end', () => resolve(data));\n    });\n    req.on('error', reject);\n    req.write(payload);\n    req.end();\n  });\n\n  // Aggiorna il task nel database\n  await new Promise((resolve, reject) => {\n    const db = new sqlite3.Database('/data/segretario.db');\n    db.run(\n      `UPDATE task SET \n        reminder_count = reminder_count + 1,\n        ultimo_sollecito = ?,\n        next_followup_at = ?,\n        updated_at = ?\n       WHERE id = ?`,\n      [nowISO, nextFollowupISO, nowISO, task.id],\n      function(err) {\n        db.close();\n        if (err) reject(err);\n        else resolve();\n      }\n    );\n  });\n}\n\nreturn [{\n  json: {\n    solleciti_inviati: tasks.length,\n    stato: 'completato'\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1040,
+        -192
+      ],
+      "id": "a4d8d30a-2f15-4715-b1c6-42060f6fbe0a",
+      "name": "Invia solleciti"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Controlla orario quiete",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Controlla orario quiete": {
+      "main": [
+        [
+          {
+            "node": "È orario consentito?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "È orario consentito?": {
+      "main": [
+        [
+          {
+            "node": "Leggi task scaduti",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Leggi task scaduti": {
+      "main": [
+        [
+          {
+            "node": "Ci sono task scaduti?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ci sono task scaduti?": {
+      "main": [
+        [
+          {
+            "node": "Invia solleciti",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": false
+  },
+  "versionId": "3944a148-9f53-47ab-95e9-f81baac48469",
+  "meta": {
+    "instanceId": "97e831daa831b2478c6e15942ecdaea506ad6ba802e16c1e1aa89d4dd0e2bb29"
+  },
+  "id": "_XITfqLcbo8KWxMNJhb6k",
+  "tags": []
+}

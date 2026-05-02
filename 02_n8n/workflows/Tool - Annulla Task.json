@@ -1,0 +1,62 @@
+{
+  "name": "Tool - Annulla Task",
+  "nodes": [
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "task_descrizione"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "23d3cea7-7399-4283-8f6c-f6fddb66bd0b",
+      "name": "When Executed by Another Workflow"
+    },
+    {
+      "parameters": {
+        "jsCode": "const sqlite3 = require('sqlite3').verbose();\n\nconst taskDescrizione = $input.first().json.task_descrizione || '';\n\nif (!taskDescrizione) {\n  return [{ json: { output: 'Parametro task_descrizione mancante.' } }];\n}\n\nconst tasks = await new Promise((resolve, reject) => {\n  const db = new sqlite3.Database('/data/segretario.db');\n  db.all(\n    `SELECT id, descrizione FROM task \n     WHERE stato = 'aperto' \n     AND LOWER(descrizione) LIKE LOWER(?)\n     ORDER BY creato_il DESC LIMIT 5`,\n    [`%${taskDescrizione}%`],\n    function(err, rows) {\n      db.close();\n      if (err) reject(err);\n      else resolve(rows);\n    }\n  );\n});\n\nif (tasks.length === 0) {\n  return [{ json: { output: `Nessun task aperto trovato con descrizione simile a \"${taskDescrizione}\".` } }];\n}\n\nconst task = tasks[0];\nconst now = new Date(new Date().toLocaleString('en-US', { timeZone: 'Europe/Rome' }));\nconst nowISO = now.toISOString().slice(0, 19).replace('T', ' ');\n\nawait new Promise((resolve, reject) => {\n  const db = new sqlite3.Database('/data/segretario.db');\n  db.run(\n    `UPDATE task SET stato = 'annullato', updated_at = ? WHERE id = ?`,\n    [nowISO, task.id],\n    function(err) {\n      db.close();\n      if (err) reject(err);\n      else resolve();\n    }\n  );\n});\n\nreturn [{ json: { \n  output: `Task ID ${task.id} annullato: \"${task.descrizione}\".`\n} }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        208,
+        0
+      ],
+      "id": "b1c0058c-a50e-4e72-bdc4-9f44dfd3f195",
+      "name": "Code in JavaScript"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": false
+  },
+  "versionId": "d9a5b51a-606f-42d9-97a5-e14d9489da63",
+  "meta": {
+    "instanceId": "97e831daa831b2478c6e15942ecdaea506ad6ba802e16c1e1aa89d4dd0e2bb29"
+  },
+  "id": "RziLiKne7kA6K9uq",
+  "tags": []
+}
