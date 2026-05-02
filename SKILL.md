@@ -1,20 +1,41 @@
+---
+name: segretario-ai
+description: >
+  Contesto completo del progetto Segretario AI — assistente personale via Signal orchestrato da n8n.
+  Usa questa skill per qualsiasi lavoro su workflow n8n, sub-workflow tool, database SQLite,
+  integrazione Whisper, calendari Outlook/Google, o qualsiasi componente del progetto Segretario AI.
+---
+
 # SKILL.md — Contesto progetto per Claude Code
 ## Segretario AI
 
 ### Scopo del progetto
 Assistente personale AI accessibile via Signal (voce e testo).
 Gestisce calendari (Outlook + Google), task con solleciti proattivi
-ed escalation, e invia un briefing mattutino vocale giornaliero.
+ed escalation, e invia un briefing mattutino giornaliero.
 
 ### Stack tecnico
-- n8n (già in esecuzione su Docker, porta 5678)
+- n8n 2.4.6 (self-hosted Docker, porta 5678)
 - signal-cli-rest-api (Docker, porta 8085) — **DEPLOYATO E FUNZIONANTE**
-- Claude API — modello Sonnet
-- Whisper API (OpenAI) — STT
-- Edge TTS (Microsoft) — TTS
-- SQLite — database locale (niente PostgreSQL)
+- Claude API — modello `claude-sonnet-4-20250514` — **AI Agent con tool**
+- Whisper API (OpenAI) — STT per messaggi vocali Signal
+- Edge TTS — **NON implementato** (decisione: risposte solo in testo)
+- SQLite — database locale (`/data/segretario.db` nel container n8n)
 - Microsoft Graph API — Outlook Calendar
 - Google Calendar API — calendario privato
+- ffmpeg statico — conversione audio AAC→MP3 per Whisper (`/data/ffmpeg`)
+- SQLite Web — interfaccia web database (`http://192.168.1.50:8002`)
+
+### Architettura principale
+**AI Agent con tool** (migrazione completata aprile/maggio 2026).
+L'orchestrazione avviene tramite il nodo AI Agent di n8n con 9 tool dedicati,
+ciascuno implementato come sub-workflow separato.
+
+**Principio:** "AI capisce l'intent, n8n calcola i dati deterministici"
+- Claude sceglie il tool e i parametri semantici
+- n8n esegue i calcoli di date, query SQLite, chiamate API
+
+---
 
 ### Infrastruttura Docker esistente (NON toccare)
 | Container | Porta host | Note |
@@ -41,187 +62,177 @@ ed escalation, e invia un briefing mattutino vocale giornaliero.
 | Container | Porta host | Stato |
 |---|---|---|
 | segretario_signal_cli | 8085 | Attivo e funzionante |
-
-### Porte disponibili per questo progetto
-- 8085 → signal-cli-rest-api (già assegnata e in uso)
-- Nessuna porta Next.js necessaria (no frontend)
-- Nessuna porta PostgreSQL necessaria (SQLite locale)
+| sqliteweb | 8002 | Attivo — interfaccia web SQLite |
 
 ---
 
-### ⚠️ RETI DOCKER — MAPPA AGGIORNATA E REGOLE CRITICHE
-
-> **Problema rilevato il 20/04/2026** durante il debug di Gestionale Caterina.
-> n8n si è riavviato e si è collegato alla rete sbagliata, perdendo visibilità
-> su `servizi_postgres` (errore: `getaddrinfo EAI_AGAIN servizi_postgres`).
-
-#### Mappa reti attuale (stato corretto post-fix)
+### ⚠️ RETI DOCKER — MAPPA E REGOLE CRITICHE
 
 | Rete | Container |
 |---|---|
 | **automation_network** | servizi_postgres, pgadmin, trasferte-app, gestionale-caterina |
 | **automation_automation_network** | cloudflared, waha_tel1, waha_tel2, cantinetta_nextjs, gestionale_nextjs, segretario_signal_cli |
-| **entrambe** | **n8n** (collegato a entrambe dopo il fix del 20/04/2026) |
+| **entrambe** | **n8n** (collegato a entrambe dopo fix 20/04/2026) |
 
-#### Origine del problema
-`automation_automation_network` è una rete creata per errore in passato
-(prefisso doppio generato da Docker Compose). **Non è la rete principale.**
-La rete corretta per i servizi condivisi è `automation_network`.
+**Regola critica:** MAI eseguire `docker compose down` in `~/progetti/automation`.
+Dopo ogni riavvio di n8n: `docker network connect automation_network n8n`
 
-#### Fix applicato (non riapplicare a meno di regressioni)
-```bash
-docker network connect automation_network n8n
+---
+
+### Database SQLite — Schema
+
+**Path host:** `/home/cesare/progetti/segretario-ai/03_database/segretario.db`
+**Path container n8n:** `/data/segretario.db`
+
+Tabelle:
+- `task` — id, descrizione, scadenza, priorita, stato, reminder_count, ultimo_sollecito, next_followup_at, snooze_until, source_message_id, calendar_event_id, creato_il, updated_at, completato_il, categoria
+- `messages_inbox` — messaggi ricevuti (deduplicazione su signal_message_id UNIQUE)
+- `messages_outbox` — risposte inviate
+- `system_settings` — configurazioni operative
+- `conversazione` — storico conversazione (ultimi 10 scambi)
+
+**Valori system_settings correnti:**
+| chiave | valore |
+|---|---|
+| orario_quiete_inizio | 21:00 |
+| orario_quiete_fine | 07:30 |
+| giorni_esclusi | domenica |
+| briefing_orario | 07:00 |
+| frequenza_solleciti_ore | 3 |
+| escalation_soglia_chiamata | 4 |
+| slot_mattina_inizio | 08:00 |
+| slot_mattina_fine | 12:00 |
+| slot_pomeriggio_inizio | 14:30 |
+| slot_pomeriggio_fine | 18:30 |
+
+---
+
+### Workflow n8n — Struttura completa
+
+#### Workflow principale: "Segretario AI"
+```
+Signal Trigger
+  → Salva in inbox (SQLite, deduplicazione, mappa date, storico conversazione)
+  → IF Deduplicazione (is_nuovo)
+  → IF È vocale?
+      → true: Scarica audio → Converti audio (ffmpeg) → Leggi audio MP3 → Whisper STT → Estrai trascrizione
+      → false: diretto
+  → AI Agent (Claude Sonnet + 9 tool)
+  → Invia risposta Signal
+  → Salva in outbox
 ```
 
-#### Regole operative — da rispettare sempre
+#### Sub-workflow tool (tutti pubblicati e attivi):
+| Nome workflow | Tool | Input |
+|---|---|---|
+| Tool - Crea Task | crea_task | descrizione, scadenza, priorita |
+| Tool - Lista Task | lista_task | filtro |
+| Tool - Completa Task | completa_task | task_descrizione |
+| Tool - Annulla Task | annulla_task | task_descrizione |
+| Tool - Posticipa Task | posticipa_task | task_descrizione, nuova_scadenza |
+| Tool - Crea Appuntamento Outlook | crea_appuntamento_outlook | title, start, end |
+| Tool - Crea Appuntamento Google | crea_appuntamento_google | title, start, end |
+| Tool - Leggi Calendario | leggi_calendario | tipo, valore, filtro_calendario |
+| Tool - Cerca Slot | cerca_slot | descrizione, durata_minuti, data_preferita, ora_preferita |
+| Tool - Conferma Slot | conferma_slot | start_iso, end_iso, descrizione |
 
-1. **MAI eseguire `docker compose down`** nella directory `~/progetti/automation`.
-   Fermerebbe n8n, waha e cloudflared, abbattendo l'intera infrastruttura.
+#### Workflow autonomi:
+- **Segretario AI — Briefing Mattutino** — cron ore 07:00, legge Outlook + Google + task, invia via Signal
+- **Segretario AI — Scheduler Solleciti** — ogni 3 ore, controlla task scaduti, escalation 4 livelli
 
-2. **Dopo ogni riavvio di n8n**, verificare su quale rete è tornato:
-   ```bash
-   docker inspect n8n | grep -A 5 "Networks"
-   ```
-   Se manca `automation_network`, ricollegarlo:
-   ```bash
-   docker network connect automation_network n8n
-   ```
+---
 
-3. **Per nuovi container che devono comunicare con `servizi_postgres`**,
-   usare SEMPRE `automation_network` (non `automation_automation_network`):
-   ```yaml
-   networks:
-     automation_network:
-       external: true
-   ```
+### Dettagli tecnici critici
 
-4. **Per nuovi container che devono essere raggiungibili da n8n**,
-   è sufficiente `automation_network`. Non serve `automation_automation_network`
-   a meno che non ci sia un bisogno specifico di raggiungere cloudflared o waha.
+#### Tool leggi_calendario — logica date
+Il tool usa `tipo` + `valore` invece di date ISO dirette.
+Claude passa solo il tipo semantico, n8n calcola le date:
+- `tipo: "relativo"` + `valore: "oggi|domani|questa_settimana|prossima_settimana"`
+- `tipo: "assoluto"` + `valore: "YYYY-MM-DD"`
 
-#### Rete del progetto Segretario AI
-- `segretario_signal_cli` è su `automation_automation_network`
-  (necessario per essere raggiungibile da n8n, che ora è su entrambe le reti)
-- Non serve `automation_network` perché il progetto usa SQLite, non PostgreSQL
+Il nodo **Prepara Filtro** usa Luxon (`DateTime`) — disponibile nativamente nei nodi Code n8n.
+
+#### Tool crea_task e posticipa_task — date
+La description del parametro `scadenza`/`nuova_scadenza` include istruzione esplicita
+di usare la TABELLA_DATE dal system prompt. Senza questa istruzione Claude calcola
+le date autonomamente e sbaglia.
+
+#### Ricezione vocali
+Flusso: Signal vocale → signal-cli → HTTP GET `/v1/attachments/{id}` → ffmpeg statico
+`/data/ffmpeg` → MP3 in `/home/node/.n8n-files/` → Whisper API → testo → AI Agent
+
+**Note critiche ffmpeg:**
+- Binario statico in `/data/ffmpeg` (accessibile dal task runner n8n)
+- File temporanei in `/home/node/.n8n-files/` (unica path scrivibile dal nodo Read/Write Files)
+- I nodi Code nel task runner NON possono usare `/tmp` (permessi negati)
+- Il nodo Read/Write Files accetta solo path sotto `/home/node/.n8n-files/`
+
+#### Invia risposta Signal
+Il destinatario è hardcodato: `+393495931632`.
+Non usa riferimenti a nodi precedenti per evitare errori `pairedItem`.
+
+#### System prompt AI Agent
+Contiene `<CONTESTO_TEMPORALE>` con mappa date generata dinamicamente da `Salva in inbox`.
+La mappa include: giorni nominali, `questa_settimana [lunedì TO domenica]`, `prossima_settimana [lunedì TO domenica]`.
+
+#### Nodo Code come tool — regola fondamentale
+I nodi Code usati come tool devono restituire una **stringa**, non `[{ json: {} }]`.
+Attivare **Specify Input Schema** con JSON Schema per ogni parametro.
+
+#### require('sqlite3') nei tool
+`require('sqlite3')` funziona nei **sub-workflow** (nodi Code normali) ma NON nei nodi Code
+collegati direttamente come tool all'AI Agent (task runner sandbox). Per questo tutti i tool
+SQLite sono implementati come sub-workflow chiamati tramite "Call n8n Workflow".
 
 ---
 
 ### Struttura cartelle
-- 01_infra/       → docker-compose.yml, .env, .env.example
-- 02_n8n/         → workflow JSON esportati da n8n, system prompt
-- 03_database/    → schema.sql, file .db (non committato)
-- 04_docs/        → guide operative
-- 05_test/        → scenari di test
-
-### Principio architetturale chiave
-"AI propone, logica esegue": Claude restituisce JSON con campo
-needs_confirmation (true/false). È n8n a decidere se eseguire
-o chiedere conferma all'utente, mai il modello.
+- `01_infra/` → docker-compose.yml, .env, .env.example
+- `02_n8n/workflows/` → workflow JSON esportati da n8n
+- `02_n8n/prompts/` → system-prompt.md
+- `03_database/` → schema.sql, segretario.db (non committato), ffmpeg (non committato)
+- `04_docs/` → guide operative
+- `05_test/` → scenari di test
 
 ---
 
-## STATO AVANZAMENTO — Aprile 2026
+## STATO AVANZAMENTO — Maggio 2026
 
-### Fase A — MVP funzionale
+### Fase A — MVP funzionale ✅ COMPLETA
+| # | Attività | Stato |
+|---|---|---|
+| 0 | SIM prepagata dedicata | ✅ Numero: +393517872627 |
+| 1 | Deploy signal-cli-rest-api | ✅ Container: segretario_signal_cli |
+| 2 | Community node Signal in n8n + workflow base | ✅ |
+| 3 | Database SQLite schema completo | ✅ 5 tabelle |
+| 4 | AI Agent con 9 tool (migrazione da HTTP Request + IF) | ✅ |
+| 5 | Integrazione Microsoft Graph API (Outlook) | ✅ |
+| 6 | Integrazione Google Calendar API | ✅ |
 
+### Fase B — Proattività ✅ COMPLETA
+| # | Attività | Stato |
+|---|---|---|
+| 7 | Briefing mattutino ore 07:00 | ✅ |
+| 8 | Solleciti task con escalation 4 livelli | ✅ |
+
+### Fase C — Voce ⚠️ PARZIALE
 | # | Attività | Stato | Note |
 |---|---|---|---|
-| 0 | SIM prepagata dedicata | ✅ FATTO | Numero: +393517872627 |
-| 1 | Deploy signal-cli-rest-api, registrazione, test | ✅ FATTO | Vedi dettagli sotto |
-| 2 | Community node Signal in n8n + workflow base | ⏳ DA FARE | Prossimo passo |
-| 3 | Database SQLite: schema completo | ⏳ DA FARE | |
-| 4 | System prompt Claude | ⏳ DA FARE | |
-| 5 | Integrazione Microsoft Graph API (Outlook) | ⏳ DA FARE | |
-| 6 | Integrazione Google Calendar API | ⏳ DA FARE | |
+| 9a | Whisper API STT (ricezione vocali) | ✅ | |
+| 9b | Edge TTS (risposte vocali) | ❌ | Decisione: risposta sempre in testo |
 
-### Fase B — Proattività
-| # | Attività | Stato |
-|---|---|---|
-| 7 | Briefing mattutino | ⏳ DA FARE |
-| 8 | Solleciti task con escalation | ⏳ DA FARE |
-
-### Fase C — Voce
-| # | Attività | Stato |
-|---|---|---|
-| 9 | Whisper API (STT) + Edge TTS | ⏳ DA FARE |
-
-### Fase D — Alert forti
-| # | Attività | Stato |
-|---|---|---|
-| 10 | CallMeBot / Pushover | ⏳ DA FARE |
-
----
-
-## Dettagli tecnici — signal-cli-rest-api
-
-### Configurazione
-- **Image:** `bbernhard/signal-cli-rest-api:latest`
-- **Container:** `segretario_signal_cli`
-- **Porta:** 8085 (host) → 8080 (container)
-- **Modo:** `json-rpc` (richiesto dal community node n8n)
-- **Volume:** `segretario_signal_cli_config`
-- **Config file:** `01_infra/docker-compose.yml`
-- **Variabili:** `01_infra/.env` (non committato)
-
-### Numero Signal registrato
-- **Numero:** +393517872627
-- **Stato:** registrato e verificato via SMS
-
-### Bug risolto in fase di setup
-`docker exec` gira come root → signal-cli salvava l'account in
-`/root/.local/share/signal-cli/data/` invece del volume montato
-in `/home/.local/share/signal-cli/data/`.
-**Soluzione applicata:** copiati manualmente i file dal path root
-al path corretto. L'account ora è visibile alla REST API.
-**Verifica:** `curl http://localhost:8085/v1/accounts` → `["+393517872627"]`
-
-### Comandi utili
-```bash
-# Verificare che il container risponda
-curl http://localhost:8085/v1/health
-
-# Verificare account registrati
-curl http://localhost:8085/v1/accounts
-
-# Inviare messaggio di test
-curl -X POST "http://localhost:8085/v2/send" -H "Content-Type: application/json" -d '{"message": "Test", "number": "+393517872627", "recipients": ["+39DESTINATARIO"]}'
-
-# Riavviare il container
-docker restart segretario_signal_cli
-```
-
----
-
-## Prossimo passo: n8n — Community Node Signal
-
-### Installazione community node
-1. Aprire n8n (http://localhost:5678 o subdomain configurato)
-2. Settings → Community Nodes → Install
-3. Package: `n8n-nodes-signal-cli-rest-api`
-4. Riavviare n8n dopo l'installazione
-
-### Primo workflow da costruire (Fase A, punto 2)
-**Nome:** `segretario-webhook-base`
-
-Nodi in sequenza:
-1. **Signal Trigger** — riceve messaggi in arrivo
-2. **SQLite** — salva messaggio in `messages_inbox` (con deduplicazione per `signal_message_id`)
-3. **HTTP Request** — chiama Claude API con system prompt
-4. **IF** — valuta `needs_confirmation` nel JSON risposta
-5. **Signal Send** — invia risposta testuale all'utente
-6. **SQLite** — salva risposta in `messages_outbox`
-
-### Riferimento signal-cli-rest-api in n8n
-- L'URL da usare nei nodi n8n per raggiungere signal-cli è:
-  `http://segretario_signal_cli:8080` (nome container, porta interna)
-  perché n8n e signal-cli sono sulla stessa rete Docker
+### Fase D — Alert forti ❌ NON implementata
+| # | Attività | Stato | Note |
+|---|---|---|---|
+| 10 | CallMeBot / Pushover | ❌ | Decisione: non aggiunge valore per uso personale |
 
 ---
 
 ## Note operative
-- Il file .db NON va su GitHub (già in .gitignore)
-- I workflow n8n si esportano da UI → 02_n8n/workflows/
-- Il system prompt è in 02_n8n/prompts/system-prompt.md
-- Variabili sensibili (API key, OAuth) sempre e solo nel file .env
-- Non creare nuovi container PostgreSQL — si usa SQLite
-- Non modificare container o reti esistenti
+- Il file `.db` NON va su GitHub (già in .gitignore)
+- Il binario `ffmpeg` NON va su GitHub (80MB) — aggiungere `03_database/ffmpeg` a .gitignore
+- I workflow n8n si esportano da UI → `02_n8n/workflows/`
+- Il system prompt è in `02_n8n/prompts/system-prompt.md`
+- Variabili sensibili (API key, OAuth) sempre e solo nel file `.env`
+- SQLite Web: `http://192.168.1.50:8002`
+- Dopo ogni `docker restart n8n`: `docker network connect automation_network n8n`
